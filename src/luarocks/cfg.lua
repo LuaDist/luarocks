@@ -166,7 +166,7 @@ if detected.windows then
    defaults.lib_extension = "dll"
    defaults.external_lib_extension = "dll"
    defaults.obj_extension = "obj"
-   defaults.external_deps_dirs = { "c:/external/" }
+   defaults.external_deps_dirs = { "c:/external/", config.EXTERNAL_LIB }
    defaults.variables.LUA_BINDIR = config.LUA_BINDIR and config.LUA_BINDIR:gsub("\\", "/") or "c:/lua5.1/bin"
    defaults.variables.LUA_INCDIR = config.LUA_INCDIR and config.LUA_INCDIR:gsub("\\", "/") or "c:/lua5.1/include"
    defaults.variables.LUA_LIBDIR = config.LUA_LIBDIR and config.LUA_LIBDIR:gsub("\\", "/") or "c:/lua5.1/lib"
@@ -200,7 +200,7 @@ if detected.mingw32 then
    defaults.lib_extension = "dll"
    defaults.external_lib_extension = "dll"
    defaults.obj_extension = "o"
-   defaults.external_deps_dirs = { "c:/external/" }
+   defaults.external_deps_dirs = { config.LUA_DIR, "c:/external/" }
    defaults.variables.LUA_BINDIR = config.LUA_BINDIR and config.LUA_BINDIR:gsub("\\", "/") or "c:/lua5.1/bin"
    defaults.variables.LUA_INCDIR = config.LUA_INCDIR and config.LUA_INCDIR:gsub("\\", "/") or "c:/lua5.1/include"
    defaults.variables.LUA_LIBDIR = config.LUA_LIBDIR and config.LUA_LIBDIR:gsub("\\", "/") or "c:/lua5.1/lib"
@@ -230,7 +230,7 @@ if detected.unix then
    defaults.lib_extension = "so"
    defaults.external_lib_extension = "so"
    defaults.obj_extension = "o"
-   defaults.external_deps_dirs = { "/usr/local", "/usr" }
+   defaults.external_deps_dirs = { config.LUA_DIR, "/usr/local", "/usr" }
    defaults.variables.LUA_BINDIR = config.LUA_BINDIR or "/usr/local/bin"
    defaults.variables.LUA_INCDIR = config.LUA_INCDIR or "/usr/local/include"
    defaults.variables.LUA_LIBDIR = config.LUA_LIBDIR or "/usr/local/lib"
