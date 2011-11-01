@@ -6,6 +6,7 @@ module("luarocks.path", package.seeall)
 
 local dir = require("luarocks.dir")
 local cfg = require("luarocks.cfg")
+local util = require("luarocks.util")
 
 help_summary = "Return the currently configured package path."
 help_arguments = ""
@@ -192,22 +193,18 @@ function bin_dir(name, version, repo)
    return dir.path(rocks_dir(repo), name, version, "bin")
 end
 
---- Extract name, version and arch of a rock filename.
--- @param rock_file string: pathname of a rock
+--- Extract name, version and arch of a rock filename,
+-- or name, version and "rockspec" from a rockspec name.
+-- @param file_name string: pathname of a rock or rockspec
 -- @return (string, string, string) or nil: name, version and arch
--- of rock, or nil if name could not be parsed
-function parse_rock_name(rock_file)
-   assert(type(rock_file) == "string")
-   return dir.base_name(rock_file):match("(.*)-([^-]+-%d+)%.([^.]+)%.rock$")
-end
-
---- Extract name and version of a rockspec filename.
--- @param rockspec_file string: pathname of a rockspec
--- @return (string, string) or nil: name and version
--- of rockspec, or nil if name could not be parsed
-function parse_rockspec_name(rockspec_file)
-   assert(type(rockspec_file) == "string")
-   return dir.base_name(rockspec_file):match("(.*)-([^-]+-%d+)%.(rockspec)")
+-- or nil if name could not be parsed
+function parse_name(file_name)
+   assert(type(file_name) == "string")
+   if file_name:match("%.rock$") then
+      return dir.base_name(file_name):match("(.*)-([^-]+-%d+)%.([^.]+)%.rock$")
+   else
+      return dir.base_name(file_name):match("(.*)-([^-]+-%d+)%.(rockspec)")
+   end
 end
 
 --- Make a rockspec or rock URL.
@@ -300,16 +297,19 @@ function versioned_name(file, prefix, name, version)
    return dir.path(prefix, name_version.."-"..rest)
 end
 
+function use_tree(tree)
+   cfg.root_dir = tree
+   cfg.rocks_dir = rocks_dir(tree)
+   cfg.deploy_bin_dir = deploy_bin_dir(tree)
+   cfg.deploy_lua_dir = deploy_lua_dir(tree)
+   cfg.deploy_lib_dir = deploy_lib_dir(tree)
+end
+
 --- Driver function for "path" command.
 -- @return boolean This function always succeeds.
 function run(...)
-   if cfg.is_platform("unix") then
-      print("export LUA_PATH='"..package.path.."'")
-      print("export LUA_CPATH='"..package.cpath.."'")
-   elseif cfg.is_platform("windows") then
-      print("SET LUA_PATH="..package.path)
-      print("SET LUA_CPATH="..package.cpath)
-   end
+   util.printout(cfg.export_lua_path:format(package.path))
+   util.printout(cfg.export_lua_cpath:format(package.cpath))
    return true
 end
 

@@ -9,6 +9,7 @@ local path = require("luarocks.path")
 local deps = require("luarocks.deps")
 local persist = require("luarocks.persist")
 local util = require("luarocks.util")
+local cfg = require("luarocks.cfg")
 
 --- Fetch a local or remote file.
 -- Make a remote or local URL/pathname local, fetching the file if necessary.
@@ -32,7 +33,7 @@ function fetch_url(url, filename)
    elseif protocol == "http" or protocol == "ftp" or protocol == "https" then
       local ok, err = fs.download(url, filename)
       if not ok then
-         return nil, "Failed downloading "..url.." - "..err, "network"
+         return nil, "Failed downloading "..url..(err and " - "..err or ""), "network"
       end
       return dir.path(fs.current_dir(), filename or dir.base_name(url))
    else
@@ -59,7 +60,11 @@ function fetch_url_at_temp_dir(url, tmpname, filename)
 
    local protocol, pathname = dir.split_url(url)
    if protocol == "file" then
-      return pathname, dir.dir_name(fs.absolute_name(pathname))
+      if fs.exists(pathname) then
+         return pathname, dir.dir_name(fs.absolute_name(pathname))
+      else
+         return nil, "File not found: "..pathname
+      end
    else
       local temp_dir = fs.make_temp_dir(tmpname)
       if not temp_dir then
@@ -162,8 +167,8 @@ function load_local_rockspec(filename)
    rockspec.source.protocol, rockspec.source.pathname = protocol, pathname
 
    -- Temporary compatibility
-   if not rockspec.source.cvs_module then rockspec.source.module = rockspec.source.cvs_module end
-   if not rockspec.source.cvs_tag then rockspec.source.tag = rockspec.source.cvs_tag end
+   if rockspec.source.cvs_module then rockspec.source.module = rockspec.source.cvs_module end
+   if rockspec.source.cvs_tag then rockspec.source.tag = rockspec.source.cvs_tag end
 
    local name_version = rockspec.package:lower() .. "-" .. rockspec.version
    if basename ~= "rockspec" and basename ~= name_version .. ".rockspec" then
@@ -303,5 +308,14 @@ function fetch_sources(rockspec, extract, dest_dir)
       end
    end
    
+   if cfg.only_sources_from
+   and rockspec.source.pathname
+   and #rockspec.source.pathname > 0 then
+      if #cfg.only_sources_from == 0 then
+         return nil, "Can't download "..rockspec.source.url.." -- download from remote servers disabled"
+      elseif rockspec.source.pathname:find(cfg.only_sources_from, 1, true) ~= 1 then
+         return nil, "Can't download "..rockspec.source.url.." -- only downloading from "..cfg.only_sources_from
+      end
+   end
    return proto.get_sources(rockspec, extract, dest_dir)
 end

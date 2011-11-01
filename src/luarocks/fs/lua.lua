@@ -159,8 +159,7 @@ end
 -- a crossplatform way.
 function change_dir_to_root()
    table.insert(dir_stack, lfs.currentdir())
-   -- TODO Does this work on Windows?
-   lfs.chdir("/")
+   lfs.chdir("/")	-- works on Windows too
 end
 
 --- Change working directory to the previous in the dir stack.
@@ -232,9 +231,11 @@ end
 --- Copy a file.
 -- @param src string: Pathname of source
 -- @param dest string: Pathname of destination
+-- @param perms string or nil: Permissions for destination file,
+-- or nil to use the source filename permissions
 -- @return boolean or (boolean, string): true on success, false on failure,
 -- plus an error message.
-function copy(src, dest)
+function copy(src, dest, perms)
    assert(src and dest)
    src = normalize(src)
    dest = normalize(dest)
@@ -242,7 +243,7 @@ function copy(src, dest)
    if destmode == "directory" then
       dest = dir.path(dest, dir.base_name(src))
    end
-   local perms = fs.get_permissions(src)
+   if not perms then perms = fs.get_permissions(src) end
    local src_h, err = io.open(src, "rb")
    if not src_h then return nil, err end
    local dest_h, err = io.open(dest, "wb+")
@@ -485,18 +486,10 @@ local redirect_protocols = {
 }
 
 local function http_request(url, http, loop_control)
-   local proxy = cfg.proxy
-   local url_arg, proxy_result
-   if proxy then
-      proxy_result = {}
-      url_arg = { url = url, proxy = proxy, sink = ltn12.sink.table(proxy_result) }
-   else
-      url_arg = url
-   end
-   local res, status, headers, line = http.request(url_arg)
-   local content, err
+   local result = {}
+   local res, status, headers, err = http.request { url = url, proxy = cfg.proxy, redirect = false, sink = ltn12.sink.table(result) }
    if not res then
-      err = status
+      return nil, status
    elseif status == 301 or status == 302 then
       local location = headers.location
       if location then
@@ -513,14 +506,12 @@ local function http_request(url, http, loop_control)
             return nil, "URL redirected to unsupported protocol - install luasec to get HTTPS support."
          end
       end
-      err = line
+      return nil, err
    elseif status ~= 200 then
-      err = line
+      return nil, err
    else
-      if proxy_result then res = table.concat(proxy_result) end
-      content = res
+      return table.concat(result)
    end
-   return content, err
 end
 
 --- Download a remote file.

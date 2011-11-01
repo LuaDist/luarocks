@@ -28,23 +28,11 @@ local function add_files_to_server(refresh, rockfiles, server, upload_server)
    assert(type(rockfiles) == "table")
    assert(type(server) == "string")
    assert(type(upload_server) == "table" or not upload_server)
-
-   local download_url = server
-   local login_url = nil
-   if upload_server then
-      if upload_server.rsync then download_url = "rsync://"..upload_server.rsync
-      elseif upload_server.http then download_url = "http://"..upload_server.http
-      elseif upload_server.ftp then download_url = "ftp://"..upload_server.ftp
-      end
-      
-      if upload_server.ftp then login_url = "ftp://"..upload_server.ftp
-      elseif upload_server.sftp then login_url = "sftp://"..upload_server.sftp
-      end
-   end
    
+   local download_url, login_url = cache.get_server_urls(server, upload_server)
    local at = fs.current_dir()
-   
    local refresh_fn = refresh and cache.refresh_local_cache or cache.split_server_url
+   
    local local_cache, protocol, server_path, user, password = refresh_fn(server, download_url, cfg.upload_user, cfg.upload_password)
    if not local_cache then
       return nil, protocol
@@ -62,12 +50,12 @@ local function add_files_to_server(refresh, rockfiles, server, upload_server)
    local files = {}
    for i, rockfile in ipairs(rockfiles) do
       if fs.exists(rockfile) then
-         print("Copying file "..rockfile.." to "..local_cache.."...")
+         util.printout("Copying file "..rockfile.." to "..local_cache.."...")
          local absolute = fs.absolute_name(rockfile)
          fs.copy(absolute, local_cache)
          table.insert(files, dir.base_name(absolute))
       else
-         print("File "..rockfile.." not found")
+         util.printerr("File "..rockfile.." not found")
       end
    end
    if #files == 0 then
@@ -76,9 +64,9 @@ local function add_files_to_server(refresh, rockfiles, server, upload_server)
 
    fs.change_dir(local_cache)
 
-   print("Updating manifest...")
+   util.printout("Updating manifest...")
    manif.make_manifest(local_cache)
-   print("Updating index.html...")
+   util.printout("Updating index.html...")
    index.make_index(local_cache)
 
    local login_info = ""
@@ -93,15 +81,15 @@ local function add_files_to_server(refresh, rockfiles, server, upload_server)
    local cmd
    if protocol == "rsync" then
       local srv, path = server_path:match("([^/]+)(/.+)")
-      cmd = "rsync -Oavz -e ssh "..local_cache.."/ "..user.."@"..srv..":"..path.."/"
+      cmd = cfg.variables.RSYNC.." --exclude=.git -Oavz -e ssh "..local_cache.."/ "..user.."@"..srv..":"..path.."/"
    elseif upload_server and upload_server.sftp then
       local part1, part2 = upload_server.sftp:match("^([^/]*)/(.*)$")
-      cmd = "scp manifest index.html "..table.concat(files, " ").." "..user.."@"..part1..":/"..part2
+      cmd = cfg.variables.SCP.." manifest index.html "..table.concat(files, " ").." "..user.."@"..part1..":/"..part2
    else
-      cmd = "curl "..login_info.." -T '{manifest,index.html,"..table.concat(files, ",").."}' "..login_url
+      cmd = cfg.variables.CURL.." "..login_info.." -T '{manifest,index.html,"..table.concat(files, ",").."}' "..login_url
    end
 
-   print(cmd)
+   util.printout(cmd)
    fs.execute(cmd)
 
    return true
@@ -113,12 +101,8 @@ function run(...)
    if #files < 1 then
       return nil, "Argument missing, see help."
    end
-   local server = flags["to"]
-   if not server then server = cfg.upload_server end
-   if not server then
-      return nil, "No server specified with --to and no default configured with upload_server."
-   end
-   
-   return add_files_to_server(not flags["no-refresh"], files, server, cfg.upload_servers and cfg.upload_servers[server])
+   local server, server_table = cache.get_upload_server(flags["to"])
+   if not server then return nil, server_table end
+   return add_files_to_server(not flags["no-refresh"], files, server, server_table)
 end
 

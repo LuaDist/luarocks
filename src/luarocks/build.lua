@@ -3,6 +3,7 @@
 -- Builds a rock, compiling its C parts if any.
 module("luarocks.build", package.seeall)
 
+local pack = require("luarocks.pack")
 local path = require("luarocks.path")
 local util = require("luarocks.util")
 local rep = require("luarocks.rep")
@@ -14,33 +15,39 @@ local manif = require("luarocks.manif")
 local cfg = require("luarocks.cfg")
 
 help_summary = "Build/compile a rock."
-help_arguments = "{<rockspec>|<rock>|<name> [<version>]}"
+help_arguments = "[--pack-binary-rock] {<rockspec>|<rock>|<name> [<version>]}"
 help = [[
-Build a rock, compiling its C parts if any.
+Build and install a rock, compiling its C parts if any.
 Argument may be a rockspec file, a source rock file
 or the name of a rock to be fetched from a repository.
+
+If --pack-binary-rock is passed, the rock is not installed;
+instead, a .rock file with the contents of compilation is produced
+in the current directory.
 ]]
 
 --- Install files to a given location.
 -- Takes a table where the array part is a list of filenames to be copied.
--- In the hash part, other keys are identifiers in Lua module format,
--- to indicate which subdirectory the file should be copied to. For example,
--- install_files({["foo.bar"] = "src/bar.lua"}, "boo") will copy src/bar.lua
--- to boo/foo.
+-- In the hash part, other keys, if is_module_path is set, are identifiers
+-- in Lua module format, to indicate which subdirectory the file should be
+-- copied to. For example, install_files({["foo.bar"] = "src/bar.lua"}, "boo")
+-- will copy src/bar.lua to boo/foo.
 -- @param files table or nil: A table containing a list of files to copy in
 -- the format described above. If nil is passed, this function is a no-op.
 -- Directories should be delimited by forward slashes as in internet URLs.
 -- @param location string: The base directory files should be copied to.
+-- @param is_module_path boolean: True if string keys in files should be
+-- interpreted as dotted module paths.
 -- @return boolean or (nil, string): True if succeeded or 
 -- nil and an error message.
-local function install_files(files, location) 
+local function install_files(files, location, is_module_path)
    assert(type(files) == "table" or not files)
    assert(type(location) == "string")
    if files then
       for k, file in pairs(files) do
          local dest = location
          if type(k) == "string" then
-            dest = dir.path(location, path.module_to_path(k))
+            dest = is_module_path and dir.path(location, path.module_to_path(k)) or k
          end
          fs.make_dir(dest)
          local ok = fs.copy(dir.path(file), dest)
@@ -79,7 +86,7 @@ function apply_patches(rockspec)
    if build.patches then
       extract_from_rockspec(build.patches)
       for patch, patchdata in util.sortedpairs(build.patches) do
-         print("Applying patch "..patch.."...")
+         util.printout("Applying patch "..patch.."...")
          local ok, err = fs.apply_patch(tostring(patch), patchdata)
          if not ok then
             return nil, "Failed applying patch "..patch
@@ -93,6 +100,9 @@ end
 -- @param rockspec_file string: local or remote filename of a rockspec.
 -- @param need_to_fetch boolean: true if sources need to be fetched,
 -- false if the rockspec was obtained from inside a source rock.
+-- @param minimal_mode boolean: true if there's no need to fetch,
+-- unpack or change dir (this is used by "luarocks make"). Implies
+-- need_to_fetch = false.
 -- @return boolean or (nil, string, [string]): True if succeeded or 
 -- nil and an error message followed by an error code.
 function build_rockspec(rockspec_file, need_to_fetch, minimal_mode)
@@ -140,14 +150,14 @@ function build_rockspec(rockspec_file, need_to_fetch, minimal_mode)
    end
    
    local dirs = {
-      lua = path.lua_dir(name, version),
-      lib = path.lib_dir(name, version),
-      conf = path.conf_dir(name, version),
-      bin = path.bin_dir(name, version),
+      lua = { name = path.lua_dir(name, version), is_module_path = true },
+      lib = { name = path.lib_dir(name, version), is_module_path = true },
+      conf = { name = path.conf_dir(name, version), is_module_path = false },
+      bin = { name = path.bin_dir(name, version), is_module_path = false },
    }
    
    for _, d in pairs(dirs) do
-      fs.make_dir(d)
+      fs.make_dir(d.name)
    end
    local rollback = util.schedule_function(function()
       fs.delete(path.install_dir(name, version))
@@ -167,14 +177,14 @@ function build_rockspec(rockspec_file, need_to_fetch, minimal_mode)
 
       -- Temporary compatibility
       if build.type == "module" then
-         print("Do not use 'module' as a build type. Use 'builtin' instead.")
+         util.printout("Do not use 'module' as a build type. Use 'builtin' instead.")
          build.type = "builtin"
       end
 
       local build_type
       ok, build_type = pcall(require, "luarocks.build." .. build.type)
       if not ok or not type(build_type) == "table" then
-         return nil, "Failed initializing build back-end for build type '"..build.type.."'"
+         return nil, "Failed initializing build back-end for build type '"..build.type.."': "..build_type
       end
   
       ok, err = build_type.run(rockspec)
@@ -185,7 +195,7 @@ function build_rockspec(rockspec_file, need_to_fetch, minimal_mode)
 
    if build.install then
       for id, install_dir in pairs(dirs) do
-         ok, err = install_files(build.install[id], install_dir)
+         ok, err = install_files(build.install[id], install_dir.name, install_dir.is_module_path)
          if not ok then 
             return nil, err
          end
@@ -203,7 +213,7 @@ function build_rockspec(rockspec_file, need_to_fetch, minimal_mode)
    end
 
    for _, d in pairs(dirs) do
-      fs.remove_dir_if_empty(d)
+      fs.remove_dir_if_empty(d.name)
    end
 
    fs.pop_dir()
@@ -216,7 +226,7 @@ function build_rockspec(rockspec_file, need_to_fetch, minimal_mode)
    ok, err = manif.make_rock_manifest(name, version)
    if err then return nil, err end
 
-   ok, err = rep.deploy_files(name, version)
+   ok, err = rep.deploy_files(name, version, rep.should_wrap_bin_scripts(rockspec))
    if err then return nil, err end
    
    util.remove_scheduled_function(rollback)
@@ -231,13 +241,13 @@ function build_rockspec(rockspec_file, need_to_fetch, minimal_mode)
    if err then return nil, err end
 
    local license = ""
-   if rockspec.description.license then
+   if rockspec.description and rockspec.description.license then
       license = ("(license: "..rockspec.description.license..")")
    end
 
    local root_dir = path.root_dir(cfg.rocks_dir)
-   print()
-   print(name.." "..version.." is now built and installed in "..root_dir.." "..license)
+   util.printout()
+   util.printout(name.." "..version.." is now built and installed in "..root_dir.." "..license)
    
    util.remove_scheduled_function(rollback)
    return true
@@ -264,6 +274,50 @@ function build_rock(rock_file, need_to_fetch)
    return ok, err, errcode
 end
 
+local function do_build(name, version)
+   if name:match("%.rockspec$") then
+      return build_rockspec(name, true)
+   elseif name:match("%.src%.rock$") then
+      return build_rock(name, false)
+   elseif name:match("%.all%.rock$") then
+      local install = require("luarocks.install")
+      return install.install_binary_rock(name)
+   elseif name:match("%.rock$") then
+      return build_rock(name, true)
+   elseif not name:match(dir.separator) then
+      local search = require("luarocks.search")
+      return search.act_on_src_or_rockspec(run, name:lower(), version)
+   end
+   return nil, "Don't know what to do with "..name
+end
+
+local function pack_binary_rock(name, version)
+
+   -- The --pack-binary-rock option for "luarocks build" basically performs
+   -- "luarocks build" on a temporary tree and then "luarocks pack". The
+   -- alternative would require refactoring parts of luarocks.build and
+   -- luarocks.pack, which would save a few file operations: the idea would be
+   -- to shave off the final deploy steps from the build phase and the initial
+   -- collect steps from the pack phase.
+
+   local temp_dir = fs.make_temp_dir("luarocks-build-pack-"..dir.base_name(name))
+   if not temp_dir then
+      return nil, "Failed creating temporary directory."
+   end
+   util.schedule_function(fs.delete, temp_dir)
+
+   path.use_tree(temp_dir)
+   local ok, err = do_build(name, version)
+   if not ok then
+      return nil, err
+   end
+   local rname, rversion = path.parse_name(name)
+   if not rname then
+      rname, rversion = name, version
+   end
+   return pack.pack_binary_rock(rname, rversion)
+end
+
 --- Driver function for "build" command.
 -- @param name string: A local or remote rockspec or rock file.
 -- If a package name is given, forwards the request to "search" and,
@@ -281,19 +335,10 @@ function run(...)
 
    local ok, err = fs.check_command_permissions(flags)
    if not ok then return nil, err end
-
-   if name:match("%.rockspec$") then
-      return build_rockspec(name, true)
-   elseif name:match("%.src%.rock$") then
-      return build_rock(name, false)
-   elseif name:match("%.all%.rock$") then
-      local install = require("luarocks.install")
-      return install.install_binary_rock(name)
-   elseif name:match("%.rock$") then
-      return build_rock(name, true)
-   elseif not name:match(dir.separator) then
-      local search = require("luarocks.search")
-      return search.act_on_src_or_rockspec(run, name:lower(), version)
+   
+   if flags["pack-binary-rock"] then
+      return pack_binary_rock(name, version)
+   else
+      return do_build(name, version)
    end
-   return nil, "Don't know what to do with "..name
 end

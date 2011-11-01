@@ -28,7 +28,7 @@ or a filename of a locally available rock.
 function install_binary_rock(rock_file)
    assert(type(rock_file) == "string")
 
-   local name, version, arch = path.parse_rock_name(rock_file)
+   local name, version, arch = path.parse_name(rock_file)
    if not name then
       return nil, "Filename "..rock_file.." does not match format 'name-version-revision.arch.rock'."
    end
@@ -65,7 +65,12 @@ function install_binary_rock(rock_file)
    ok, err, errcode = deps.fulfill_dependencies(rockspec)
    if err then return nil, err, errcode end
 
-   ok, err = rep.deploy_files(name, version)
+   local wrap_bin_scripts = true
+   if rockspec.deploy and rockspec.deploy.wrap_bin_scripts == false then
+      wrap_bin_scripts = false
+   end
+
+   ok, err = rep.deploy_files(name, version, rep.should_wrap_bin_scripts(rockspec))
    if err then return nil, err end
 
    util.remove_scheduled_function(rollback)
@@ -85,8 +90,8 @@ function install_binary_rock(rock_file)
    end
 
    local root_dir = path.root_dir(cfg.rocks_dir)
-   print()
-   print(name.." "..version.." is now installed in "..root_dir.." "..license)
+   util.printout()
+   util.printout(name.." "..version.." is now installed in "..root_dir.." "..license)
    
    util.remove_scheduled_function(rollback)
    return true
@@ -112,6 +117,7 @@ function run(...)
    if not ok then return nil, err end
 
    if name:match("%.rockspec$") or name:match("%.src%.rock$") then
+      util.printout("Using "..name.."... switching to 'build' mode")
       local build = require("luarocks.build")
       return build.run(name, flags["local"] and "--local")
    elseif name:match("%.rock$") then
@@ -123,14 +129,14 @@ function run(...)
          return nil, err
       elseif type(results) == "string" then
          local url = results
-         print("Installing "..url.."...")
+         util.printout("Installing "..url.."...")
          return run(url)
       else
-         print()
-         print("Could not determine which rock to install.")
-         print()
-         print("Search results:")
-         print("---------------")
+         util.printout()
+         util.printerr("Could not determine which rock to install.")
+         util.printout()
+         util.printout("Search results:")
+         util.printout("---------------")
          search.print_results(results)
          return nil, (next(results) and "Please narrow your query." or "No results found.")
       end

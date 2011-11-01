@@ -15,9 +15,9 @@ local function die(message)
 
    local ok, err = pcall(util.run_scheduled_functions)
    if not ok then
-      print("\nLuaRocks "..cfg.program_version.." internal bug (please report at luarocks-developers@lists.luaforge.net):\n"..err)
+      util.printerr("\nLuaRocks "..cfg.program_version.." internal bug (please report at luarocks-developers@lists.sourceforge.net):\n"..err)
    end
-   print("\nError: "..message)
+   util.printerr("\nError: "..message)
    os.exit(1)
 end
 
@@ -31,14 +31,6 @@ local function is_writable(tree)
     end
     return writable
   end
-end
-
-local function use_tree(tree)
-   cfg.root_dir = tree
-   cfg.rocks_dir = path.rocks_dir(tree)
-   cfg.deploy_bin_dir = path.deploy_bin_dir(tree)
-   cfg.deploy_lua_dir = path.deploy_lua_dir(tree)
-   cfg.deploy_lib_dir = path.deploy_lib_dir(tree)
 end
 
 --- Main command-line processor.
@@ -70,9 +62,9 @@ function run_command(...)
    local command
    
    if flags["version"] then
-      print(program_name.." "..cfg.program_version)
-      print(program_description)
-      print()
+      util.printout(program_name.." "..cfg.program_version)
+      util.printout(program_description)
+      util.printout()
       os.exit(0)
    elseif flags["help"] or #nonflags == 0 then
       command = "help"
@@ -87,6 +79,12 @@ function run_command(...)
       end
    end
    command = command:gsub("-", "_")
+
+   if flags["extensions"] then
+      cfg.use_extensions = true
+      local type_check = require("luarocks.type_check")
+      type_check.load_extensions()
+   end
    
    if cfg.local_by_default then
       flags["local"] = true
@@ -97,12 +95,12 @@ function run_command(...)
          die("Argument error: use --to=<path>")
       end
       local root_dir = fs.absolute_name(flags["to"])
-      use_tree(root_dir)
+      path.use_tree(root_dir)
    elseif flags["local"] then
-      use_tree(cfg.home_tree)
+      path.use_tree(cfg.home_tree)
    else
       local trees = cfg.rocks_trees
-      use_tree(trees[#trees])
+      path.use_tree(trees[#trees])
    end
 
    if type(cfg.root_dir) == "string" then
@@ -132,6 +130,10 @@ function run_command(...)
       end
       cfg.rocks_servers = { flags["only-from"] }
    end
+
+   if flags["only-sources-from"] then
+      cfg.only_sources_from = flags["only-sources-from"]
+   end
   
    if command ~= "help" then
       for k, v in pairs(cmdline_vars) do
@@ -142,7 +144,7 @@ function run_command(...)
    if commands[command] then
       local xp, ok, err = xpcall(function() return commands[command].run(unpack(args)) end, function(err)
          die(debug.traceback("LuaRocks "..cfg.program_version
-            .." bug (please report at luarocks-developers@lists.luaforge.net).\n"
+            .." bug (please report at luarocks-developers@lists.sourceforge.net).\n"
             ..err, 2))
       end)
       if xp and (not ok) then

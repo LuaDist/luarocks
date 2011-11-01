@@ -1,12 +1,12 @@
 
---- Fetch back-end for retrieving sources from GIT.
-module("luarocks.fetch.git", package.seeall)
+--- Fetch back-end for retrieving sources from HG.
+module("luarocks.fetch.hg", package.seeall)
 
 local fs = require("luarocks.fs")
 local dir = require("luarocks.dir")
 local util = require("luarocks.util")
 
---- Download sources for building a rock, using git.
+--- Download sources for building a rock, using hg.
 -- @param rockspec table: The rockspec table
 -- @param extract boolean: Unused in this module (required for API purposes.)
 -- @param dest_dir string or nil: If set, will extract to the given directory.
@@ -17,16 +17,17 @@ function get_sources(rockspec, extract, dest_dir)
    assert(type(rockspec) == "table")
    assert(type(dest_dir) == "string" or not dest_dir)
 
-   local git_cmd = rockspec.variables.GIT
+   local hg_cmd = rockspec.variables.HG
    local name_version = rockspec.name .. "-" .. rockspec.version
-   local module = dir.base_name(rockspec.source.url)
-   -- Strip off .git from base name if present
-   module = module:gsub("%.git$", "")
-   local command = {git_cmd, "clone", "--depth=1", rockspec.source.url, module}
-   local checkout_command
+   -- Strip off special hg:// protocol type
+   local url = rockspec.source.url:gsub("^hg://", "") 
+
+   local module = dir.base_name(url)
+
+   local command = {hg_cmd, "clone", url, module}
    local tag_or_branch = rockspec.source.tag or rockspec.source.branch
    if tag_or_branch then
-      checkout_command = {git_cmd, "checkout", tag_or_branch}
+      command = {hg_cmd, "clone", "--rev", url, module}
    end
    local store_dir
    if not dest_dir then
@@ -40,16 +41,12 @@ function get_sources(rockspec, extract, dest_dir)
    end
    fs.change_dir(store_dir)
    if not fs.execute(unpack(command)) then
-      return nil, "Failed cloning git repository."
+      return nil, "Failed cloning hg repository."
    end
    fs.change_dir(module)
-   if checkout_command then
-      if not fs.execute(unpack(checkout_command)) then
-         return nil, "Failed checking out tag/branch from git repository."
-      end
-   end
-   fs.delete(dir.path(store_dir, module, ".git"))
-   fs.delete(dir.path(store_dir, module, ".gitignore"))
+
+   fs.delete(dir.path(store_dir, module, ".hg"))
+   fs.delete(dir.path(store_dir, module, ".hgignore"))
    fs.pop_dir()
    fs.pop_dir()
    return module, store_dir

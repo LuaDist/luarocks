@@ -84,7 +84,11 @@ function deep_merge(dst, src)
          if not dst[k] then
             dst[k] = {}
          end
-         deep_merge(dst[k], v)
+         if type(dst[k]) == "table" then
+            deep_merge(dst[k], v)
+         else
+            dst[k] = v
+         end
       else
          dst[k] = v
       end
@@ -123,12 +127,6 @@ function platform_overrides(tbl)
 end
 
 local var_format_pattern = "%$%((%a[%a%d_]+)%)"
-
---- Display a warning message.
--- @param msg string: the warning message
-function warning(msg)
-   print("Warning: "..msg)
-end
 
 --- Create a new shallow copy of a table: a new table with
 -- the same keys and values. Keys point to the same objects as
@@ -257,6 +255,24 @@ function starts_with(s, prefix)
    return s:sub(1,#prefix) == prefix
 end
 
+--- Print a line to standard output
+function printout(...)
+   io.stdout:write(table.concat({...},"\t"))
+   io.stdout:write("\n")
+end
+
+--- Print a line to standard error
+function printerr(...)
+   io.stderr:write(table.concat({...},"\t"))
+   io.stderr:write("\n")
+end
+
+--- Display a warning message.
+-- @param msg string: the warning message
+function warning(msg)
+   printerr("Warning: "..msg)
+end
+
 -- from http://lua-users.org/wiki/SplitJoin
 -- by PhilippeLhoste
 function split_string(str, delim, maxNb)
@@ -302,7 +318,7 @@ which logically are exactly not equivalent to the original code.
 This routine can serve for pretty formating tables with
 proper indentations, apart from printing them:
 
-print(table.show(t, "t"))   -- a typical use
+io.write(table.show(t, "t"))   -- a typical use
 
 Heavily based on "Saving tables with cycles", PIL2, p. 113.
 

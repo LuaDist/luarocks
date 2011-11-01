@@ -17,6 +17,7 @@ local cfg = require("luarocks.cfg")
 local manif_core = require("luarocks.manif_core")
 local path = require("luarocks.path")
 local dir = require("luarocks.dir")
+local util = require("luarocks.util")
 
 local operators = {
    ["=="] = "==",
@@ -135,7 +136,7 @@ function parse_version(vstring)
          -- extract a word
          token, rest = vstring:match("^(%a+)[%.%-%_]*(.*)")
          if not token then
-            print("Warning: version number '"..vstring.."' could not be parsed.")
+            util.printerr("Warning: version number '"..vstring.."' could not be parsed.")
             version[i] = 0
             break
          end
@@ -435,34 +436,34 @@ function fulfill_dependencies(rockspec)
    local matched, missing, no_upgrade = match_deps(rockspec)
 
    if next(no_upgrade) then
-      print("Missing dependencies for "..rockspec.name.." "..rockspec.version..":")
+      util.printerr("Missing dependencies for "..rockspec.name.." "..rockspec.version..":")
       for _, dep in pairs(no_upgrade) do
-         print(show_dep(dep))
+         util.printerr(show_dep(dep))
       end
       if next(missing) then
          for _, dep in pairs(missing) do
-            print(show_dep(dep))
+            util.printerr(show_dep(dep))
          end
       end
-      print()
+      util.printerr()
       for _, dep in pairs(no_upgrade) do
-         print("This version of "..rockspec.name.." is designed for use with")
-         print(show_dep(dep)..", but is configured to avoid upgrading it")
-         print("automatically. Please upgrade "..dep.name.." with")
-         print("   luarocks install "..dep.name)
-         print("or choose an older version of "..rockspec.name.." with")
-         print("   luarocks search "..rockspec.name)
+         util.printerr("This version of "..rockspec.name.." is designed for use with")
+         util.printerr(show_dep(dep)..", but is configured to avoid upgrading it")
+         util.printerr("automatically. Please upgrade "..dep.name.." with")
+         util.printerr("   luarocks install "..dep.name)
+         util.printerr("or choose an older version of "..rockspec.name.." with")
+         util.printerr("   luarocks search "..rockspec.name)
       end
       return nil, "Failed matching dependencies."
    end
 
    if next(missing) then
-      print()
-      print("Missing dependencies for "..rockspec.name..":")
+      util.printerr()
+      util.printerr("Missing dependencies for "..rockspec.name..":")
       for _, dep in pairs(missing) do
-         print(show_dep(dep))
+         util.printerr(show_dep(dep))
       end
-      print()
+      util.printerr()
 
       for _, dep in pairs(missing) do
          -- Double-check in case dependency was filled during recursion.
@@ -506,23 +507,38 @@ function check_external_deps(rockspec, mode)
       patterns = cfg.runtime_external_deps_patterns
       subdirs = cfg.runtime_external_deps_subdirs
    end
-   local dirs = {
-      BINDIR = { subdir = subdirs.bin, testfile = "program", pattern = patterns.bin },
-      INCDIR = { subdir = subdirs.include, testfile = "header", pattern = patterns.include },
-      LIBDIR = { subdir = subdirs.lib, testfile = "library", pattern = patterns.lib }
-   }
-   if mode == "install" then
-      dirs.INCDIR = nil
-   end
    if rockspec.external_dependencies then
       for name, files in pairs(rockspec.external_dependencies) do
          local ok = true
          local failed_file = nil
+         local failed_dirname = nil
          for _, extdir in ipairs(cfg.external_deps_dirs) do
             ok = true
             local prefix = vars[name.."_DIR"]
+            local dirs = {
+               BINDIR = { subdir = subdirs.bin, testfile = "program", pattern = patterns.bin },
+               INCDIR = { subdir = subdirs.include, testfile = "header", pattern = patterns.include },
+               LIBDIR = { subdir = subdirs.lib, testfile = "library", pattern = patterns.lib }
+            }
+            if mode == "install" then
+               dirs.INCDIR = nil
+            end
             if not prefix then
                prefix = extdir
+            end
+            if type(prefix) == "table" then
+               if prefix.bin then
+                  dirs.BINDIR.subdir = prefix.bin
+               end
+               if prefix.include then
+                  if dirs.INCDIR then
+                     dirs.INCDIR.subdir = prefix.include
+                  end
+               end
+               if prefix.lib then
+                  dirs.LIBDIR.subdir = prefix.lib
+               end
+               prefix = prefix.prefix
             end
             for dirname, dirdata in pairs(dirs) do
                dirdata.dir = vars[name.."_"..dirname] or dir.path(prefix, dirdata.subdir)
@@ -566,6 +582,7 @@ function check_external_deps(rockspec, mode)
                   end
                   if not found then
                      ok = false
+                     failed_dirname = dirname
                      break
                   end
                end
@@ -579,7 +596,7 @@ function check_external_deps(rockspec, mode)
             end
          end
          if not ok then
-            return nil, "Could not find expected file "..failed_file.." for "..name.." -- you may have to install "..name.." in your system and/or set the "..name.."_DIR variable", "dependency"
+            return nil, "Could not find expected file "..failed_file.." for "..name.." -- you may have to install "..name.." in your system and/or pass "..name.."_DIR or "..name.."_"..failed_dirname.." to the luarocks command. Example: luarocks install "..rockspec.name.." "..name.."_DIR=/usr/local", "dependency"
          end
       end
    end
