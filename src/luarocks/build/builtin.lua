@@ -63,36 +63,25 @@ function run(rockspec)
       end
    end
 
+   -- MinGW basically behaves the same as Unix
    if cfg.is_platform("mingw32") then
-      compile_object = function(object, source, defines, incdirs)
+         compile_object = function(object, source, defines, incdirs)
          local extras = {}
          add_flags(extras, "-D%s", defines)
          add_flags(extras, "-I%s", incdirs)
-         return execute(variables.CC.." "..variables.CFLAGS, "-c", "-o", object, "-I"..variables.LUA_INCDIR, source, unpack(extras))
+         return execute(variables.CC.." "..variables.CFLAGS, "-I"..variables.LUA_INCDIR, "-c", source, "-o", object, unpack(extras))
       end
-      compile_library = function(library, objects, libraries, libdirs, name)
+      compile_library = function (library, objects, libraries, libdirs)
          local extras = { unpack(objects) }
          add_flags(extras, "-L%s", libdirs)
-         add_flags(extras, "%s.lib", libraries)
-         extras[#extras+1] = dir.path(variables.LUA_LIBDIR, "lua5.1.lib")
-         extras[#extras+1] = "-l" .. (variables.MSVCRT or "msvcr80")
-         local ok = execute(variables.LD.." "..variables.LIBFLAG, "-o", library, unpack(extras))
-         return ok
+         add_flags(extras, "-l%s", libraries)
+		 -- Link to Lua
+         add_flags(extras, "-l%s", variables.LUA_LIB)
+         return execute(variables.LD.." "..variables.LIBFLAG, "-o", library, "-L"..variables.LUA_LIBDIR, unpack(extras))
       end
-      compile_wrapper_binary = function(fullname, name)
-         local fullbasename = fullname:gsub("%.lua$", ""):gsub("/", "\\")
-         local basename = name:gsub("%.lua$", ""):gsub("/", "\\")
-         local rcname = basename..".rc"
-         local resname = basename..".o"
-         local wrapname = basename..".exe"
-         make_rc(fullname, fullbasename..".rc")
-         local ok = execute(variables.RC, "-o", resname, rcname)
-         if not ok then return ok end
-         ok = execute(variables.LD, "-o", wrapname, resname, variables.WRAPPER,
-                      dir.path(variables.LUA_LIBDIR, "lua5.1.lib"), "-l" .. (variables.MSVCRT or "msvcr80"), "-luser32")
-         return ok, wrapname
-      end
-   elseif cfg.is_platform("win32") then
+      compile_wrapper_binary = function(fullname, name) return true, name end
+	-- MSVC specific commands
+	elseif cfg.is_platform("win32") then
       compile_object = function(object, source, defines, incdirs)
          local extras = {}
          add_flags(extras, "-D%s", defines)
@@ -109,7 +98,7 @@ function run(rockspec)
          def:write("EXPORTS\n")
          def:write("luaopen_"..name:gsub("%.", "_").."\n")
          def:close()
-         local ok = execute(variables.LD, "-dll", "-def:"..deffile, "-out:"..library, dir.path(variables.LUA_LIBDIR, "lua5.1.lib"), unpack(extras))
+         local ok = execute(variables.LD, "-dll", "-def:"..deffile, "-out:"..library, dir.path(variables.LUA_LIBDIR, variables.LUA_LIB..".lib"), unpack(extras))
          local manifestfile = basename..".dll.manifest"
          if ok and fs.exists(manifestfile) then
             ok = execute(variables.MT, "-manifest", manifestfile, "-outputresource:"..basename..".dll;2")
@@ -126,7 +115,7 @@ function run(rockspec)
          local ok = execute(variables.RC, "-r", "-fo"..resname, rcname)
          if not ok then return ok end
          ok = execute(variables.LD, "-out:"..wrapname, resname, variables.WRAPPER,
-                      dir.path(variables.LUA_LIBDIR, "lua5.1.lib"), "user32.lib")
+                      dir.path(variables.LUA_LIBDIR, variables.LUA_LIB..".lib"), "user32.lib")
          local manifestfile = wrapname..".manifest"
          if ok and fs.exists(manifestfile) then
             ok = execute(variables.MT, "-manifest", manifestfile, "-outputresource:"..wrapname..";1")
@@ -134,6 +123,7 @@ function run(rockspec)
          return ok, wrapname
       end
    else
+	-- Unix, Linux, Cygwin
       compile_object = function(object, source, defines, incdirs)
          local extras = {}
          add_flags(extras, "-D%s", defines)
@@ -144,9 +134,8 @@ function run(rockspec)
          local extras = { unpack(objects) }
          add_flags(extras, "-L%s", libdirs)
          add_flags(extras, "-l%s", libraries)
-         if cfg.is_platform("cygwin") then
-            add_flags(extras, "-l%s", {"lua"})
-         end
+		 -- Link to Lua
+         add_flags(extras, "-l%s", variables.LUA_LIB)
          return execute(variables.LD.." "..variables.LIBFLAG, "-o", library, "-L"..variables.LUA_LIBDIR, unpack(extras))
       end
       compile_wrapper_binary = function(fullname, name) return true, name end

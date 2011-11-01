@@ -152,7 +152,8 @@ local defaults = {
    },
 
    lua_extension = "lua",
-   lua_interpreter = site_config.LUA_INTERPRETER or "lua",
+   lua_library = site_config.LUA_LIB or "lua",
+   lua_interpreter = site_config.LUA_BIN or "lua",
    downloader = site_config.LUAROCKS_DOWNLOADER or "wget",
    md5checker = site_config.LUAROCKS_MD5CHECKER or "md5sum",
 
@@ -360,6 +361,7 @@ end
 
 -- Expose some more values detected by LuaRocks for use by rockspec authors.
 defaults.variables.LUA = defaults.lua_interpreter
+defaults.variables.LUA_LIB = defaults.lua_library
 defaults.variables.LIB_EXTENSION = defaults.lib_extension
 defaults.variables.OBJ_EXTENSION = defaults.obj_extension
 defaults.variables.LUAROCKS_PREFIX = site_config.LUAROCKS_PREFIX

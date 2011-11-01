@@ -4,22 +4,26 @@
 # For details see the COPYRIGHT file distributed with LuaDist.
 # Please note that the package source code is licensed under its own license.
 
-project ( luarocks NONE )
+# C project specification is needed as MinGW would not be detected otherwise
+project ( luarocks C )
 cmake_minimum_required ( VERSION 2.6 )
 include ( dist.cmake )
 
-## settings
-set ( LUA_INCDIR ${INSTALL_INC} )
-set ( LUA_LIBDIR ${INSTALL_LIB} )
-set ( LUA_BINDIR ${INSTALL_BIN} )
-set ( LUA_INTERPRETER lua )
-set ( LUA_SUFFIX "51" )
-
-set ( LUAROCKS_SYSCONFIG ${INSTALL_ETC} )
-set ( LUAROCKS_ROCKS_TREE ${INSTALL_DATA}/rocks )
+# Settings
+set ( LUAROCKS_PREFIX ${CMAKE_INSTALL_PREFIX}/ CACHE STRING "Prefix where LuaRocks should be installed." )
+set ( LUAROCKS_SYSCONFDIR ${INSTALL_ETC} CACHE STRING "Location where the config file should be installed." )
+set ( LUAROCKS_ROCKS_TREE ${INSTALL_DATA}/rocks CACHE STRING "Root of the local tree of installed rocks." )
+set ( LUAROCKS_FORCE_CONFIG true CACHE STRING "Use a single config location. Do not use the LUAROCKS_CONFIG variable or the user's home directory. Useful to avoid conflicts when LuaRocks is embedded within an application. (true|false)" )
+set ( LUAROCKS_LUA_BIN lua CACHE STRING "Name of the lua executable."  )
+set ( LUAROCKS_LUA_LIB lua CACHE STRING "Name of the lua library to link against when using builtin build-type." )
+set ( LUAROCKS_LUA_BINDIR ${INSTALL_BIN} CACHE STRING "You can also specify Lua's binary dir." )
+set ( LUAROCKS_LUA_INCDIR ${INSTALL_INC} CACHE STRING "You can also specify Lua's includes dir." )
+set ( LUAROCKS_LUA_LIBDIR ${INSTALL_LIB} CACHE STRING "You can also specify Lua's libraries dir." )
+set ( LUAROCKS_DOWNLOADER curl CACHE STRING "Which tool to use as a downloader. (wget|curl)" )
+set ( LUAROCKS_MD5CHECKER md5 CACHE STRING "Which tool to use for checksum. (md5sum|openssl|md5)" ) 
 
 # System detection
-set ( LUAROCKS_UNAME_S Unix CACHE STRING "Detected system.")
+set ( LUAROCKS_UNAME_S Unix CACHE STRING "Detected system." Unknown)
 if ( CYGWIN )
   set ( LUAROCKS_UNAME_S CYGWIN )
 elseif ( MINGW )
@@ -38,16 +42,14 @@ if( CMAKE_SIZEOF_VOID_P EQUAL 8 )
    set ( LUAROCKS_UNAME_M x86_64 )
 endif ()
 
-set ( LUAROCKS_DOWNLOADER curl )
-set ( LUAROCKS_MD5CHECKER md5sum )
-set ( LUAROCKS_FORCE_CONFIG true )
-configure_file ( config.in ${CMAKE_CURRENT_BINARY_DIR}/config.lua @ONLY )
+# Generate site_config.lua file
+configure_file ( config.in ${CMAKE_CURRENT_SOURCE_DIR}/src/luarocks/site_config.lua @ONLY )
 
+# Install Everything
 install ( DIRECTORY src/luarocks DESTINATION ${INSTALL_LMOD} )
-install_lua_module ( luarocks.config ${CMAKE_CURRENT_BINARY_DIR}/config.lua )
 install_lua_executable ( luarocks src/bin/luarocks )  
 install_lua_executable ( luarocks-admin src/bin/luarocks-admin )  
 
-install_data ( COPYING README.md )
+install_data ( COPYING COPYING_7z COPYING_lua README.md )
 install_data ( COPYING INTO rocks )
 install_test ( test/ )
