@@ -46,7 +46,7 @@ end
 -- nil and an error message otherwise.
 function run(rockspec)
    assert(type(rockspec) == "table")
-   local compile_object, compile_library
+   local compile_object, compile_library, compile_wrapper_binary
 
    local build = rockspec.build
    local variables = rockspec.variables
@@ -74,10 +74,24 @@ function run(rockspec)
       compile_library = function (library, objects, libraries, libdirs)
          local extras = { unpack(objects) }
          add_flags(extras, "-L%s", libdirs)
-         add_flags(extras, "-l%s", libraries)
-		 -- Link to Lua
-         add_flags(extras, "-l%s", variables.LUA_LIB)
-         return execute(variables.LD.." "..variables.LIBFLAG, "-o", library, "-L"..variables.LUA_LIBDIR, unpack(extras))
+         add_flags(extras, "%s.lib", libraries)
+         extras[#extras+1] = dir.path(variables.LUA_LIBDIR, variables.LUALIB)
+         extras[#extras+1] = "-l" .. (variables.MSVCRT or "msvcr80")
+         local ok = execute(variables.LD.." "..variables.LIBFLAG, "-o", library, unpack(extras))
+         return ok
+      end
+      compile_wrapper_binary = function(fullname, name)
+         local fullbasename = fullname:gsub("%.lua$", ""):gsub("/", "\\")
+         local basename = name:gsub("%.lua$", ""):gsub("/", "\\")
+         local rcname = basename..".rc"
+         local resname = basename..".o"
+         local wrapname = basename..".exe"
+         make_rc(fullname, fullbasename..".rc")
+         local ok = execute(variables.RC, "-o", resname, rcname)
+         if not ok then return ok end
+         ok = execute(variables.LD, "-o", wrapname, resname, variables.WRAPPER,
+                      dir.path(variables.LUA_LIBDIR, variables.LUALIB), "-l" .. (variables.MSVCRT or "msvcr80"), "-luser32")
+         return ok, wrapname
       end
       compile_wrapper_binary = function(fullname, name) return true, name end
 	-- MSVC specific commands
@@ -98,7 +112,11 @@ function run(rockspec)
          def:write("EXPORTS\n")
          def:write("luaopen_"..name:gsub("%.", "_").."\n")
          def:close()
+<<<<<<< HEAD
          local ok = execute(variables.LD, "-dll", "-def:"..deffile, "-out:"..library, dir.path(variables.LUA_LIBDIR, variables.LUA_LIB..".lib"), unpack(extras))
+=======
+         local ok = execute(variables.LD, "-dll", "-def:"..deffile, "-out:"..library, dir.path(variables.LUA_LIBDIR, variables.LUALIB), unpack(extras))
+>>>>>>> 64153c9560db6484727c6c76e7b5dbc44e879c36
          local manifestfile = basename..".dll.manifest"
          if ok and fs.exists(manifestfile) then
             ok = execute(variables.MT, "-manifest", manifestfile, "-outputresource:"..basename..".dll;2")
@@ -115,7 +133,11 @@ function run(rockspec)
          local ok = execute(variables.RC, "-r", "-fo"..resname, rcname)
          if not ok then return ok end
          ok = execute(variables.LD, "-out:"..wrapname, resname, variables.WRAPPER,
+<<<<<<< HEAD
                       dir.path(variables.LUA_LIBDIR, variables.LUA_LIB..".lib"), "user32.lib")
+=======
+                      dir.path(variables.LUA_LIBDIR, variables.LUALIB), "user32.lib")
+>>>>>>> 64153c9560db6484727c6c76e7b5dbc44e879c36
          local manifestfile = wrapname..".manifest"
          if ok and fs.exists(manifestfile) then
             ok = execute(variables.MT, "-manifest", manifestfile, "-outputresource:"..wrapname..";1")
@@ -133,6 +155,7 @@ function run(rockspec)
       compile_library = function (library, objects, libraries, libdirs)
          local extras = { unpack(objects) }
          add_flags(extras, "-L%s", libdirs)
+         add_flags(extras, "-Wl,-rpath,%s:", libdirs)
          add_flags(extras, "-l%s", libraries)
 		 -- Link to Lua
          add_flags(extras, "-l%s", variables.LUA_LIB)
@@ -176,7 +199,7 @@ function run(rockspec)
       if type(info) == "string" then
          local ext = info:match(".([^.]+)$")
          if ext == "lua" then
-            if info:match("init.lua$") then
+            if info:match("init%.lua$") and not name:match("%.init$") then
                moddir = path.module_to_path(name..".init")
             end
             local dest = dir.path(luadir, moddir)

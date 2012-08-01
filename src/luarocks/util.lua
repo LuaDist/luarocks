@@ -1,10 +1,11 @@
 
-local global_env = _G
-
---- Utility functions shared by other modules.
+--- Assorted utilities for managing tables, plus a scheduler for rollback functions.
 -- Does not requires modules directly (only as locals
 -- inside specific functions) to avoid interdependencies,
 -- as this is used in the bootstrapping stage of luarocks.cfg.
+
+local global_env = _G
+
 module("luarocks.util", package.seeall)
 
 local scheduled_functions = {}
@@ -26,7 +27,7 @@ end
 
 --- Unschedule a function.
 -- This is useful for cancelling a rollback of a completed operation.
--- @param table: The token representing the scheduled function that was
+-- @param item table: The token representing the scheduled function that was
 -- returned from the schedule_function call.
 function remove_scheduled_function(item)
    for k, v in pairs(scheduled_functions) do
@@ -235,17 +236,42 @@ end
 -- @see sortedpairs
 local function sortedpairs_iterator(tbl, sort_function)
    local ks = keys(tbl)
-   table.sort(ks, sort_function or default_sort)
-   for _, k in ipairs(ks) do
-      coroutine.yield(k, tbl[k])
+   if not sort_function or type(sort_function) == "function" then
+      table.sort(ks, sort_function or default_sort)
+      for _, k in ipairs(ks) do
+         coroutine.yield(k, tbl[k])
+      end
+   else
+      local order = sort_function
+      local done = {}
+      for _, k in ipairs(order) do
+         local sub_order
+         if type(k) == "table" then
+            sub_order = k[2]
+            k = k[1]
+         end
+         if tbl[k] then
+            done[k] = true
+            coroutine.yield(k, tbl[k], sub_order)
+         end
+      end
+      table.sort(ks, default_sort)
+      for _, k in ipairs(ks) do
+         if not done[k] then
+            coroutine.yield(k, tbl[k])
+         end
+      end
    end
 end
 
 --- A table iterator generator that returns elements sorted by key,
 -- to be used in "for" loops.
 -- @param tbl table: The table to be iterated.
--- @param sort_function function or nil: An optional comparison function
--- to be used by table.sort when sorting keys.
+-- @param sort_function function or table or nil: An optional comparison function
+-- to be used by table.sort when sorting keys, or an array listing an explicit order
+-- for keys. If a value itself is an array, it is taken so that the first element
+-- is a string representing the field name, and the second element is a priority table
+-- for that key.
 -- @return function: the iterator function.
 function sortedpairs(tbl, sort_function)
    return coroutine.wrap(function() sortedpairs_iterator(tbl, sort_function) end)
@@ -287,7 +313,7 @@ function split_string(str, delim, maxNb)
    local pat = "(.-)" .. delim .. "()"
    local nb = 0
    local lastPos
-   for part, pos in string.gfind(str, pat) do
+   for part, pos in string.gmatch(str, pat) do
       nb = nb + 1
       result[nb] = part
       lastPos = pos

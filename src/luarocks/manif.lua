@@ -1,4 +1,8 @@
 
+--- Module for handling manifest files and tables.
+-- Manifest files describe the contents of a LuaRocks tree or server.
+-- They are loaded into manifest tables, which are then used for
+-- performing searches, matching dependencies, etc.
 module("luarocks.manif", package.seeall)
 
 local manif_core = require("luarocks.manif_core")
@@ -94,7 +98,7 @@ function load_manifest(repo_url)
       local name = repo_url:gsub("[/:]","_")
       local file, err, errcode = fetch.fetch_url_at_temp_dir(url, "luarocks-manifest-"..name)
       if not file then
-         return nil, "Failed fetching manifest for "..repo_url, errcode
+         return nil, "Failed fetching manifest for "..repo_url..(err and " - "..err or ""), errcode
       end
       pathname = file
    end
@@ -172,12 +176,11 @@ local function sort_package_matching_table(tbl)
    end
 end
 
---- Process the dependencies of a package to determine its dependency
--- chain for loading modules.
--- @param name string: Package name.
--- @param version string: Package version.
--- @return (table, table): A table listing dependencies as string-string pairs
--- of names and versions, and a similar table of missing dependencies.
+--- Process the dependencies of a manifest table to determine its dependency
+-- chains for loading modules. The manifest dependencies information is filled
+-- and any dependency inconsistencies or missing dependencies are reported to
+-- standard error.
+-- @param manifest table: a manifest table.
 local function update_dependencies(manifest)
    for pkg, versions in pairs(manifest.repository) do
       for version, repos in pairs(versions) do
@@ -188,9 +191,9 @@ local function update_dependencies(manifest)
                repo.dependencies, missing = deps.scan_deps({}, {}, manifest, pkg, version)
                repo.dependencies[pkg] = nil
                if missing then
-                  for miss, _ in pairs(missing) do
+                  for miss, err in pairs(missing) do
                      if miss == current then
-                        util.printerr("Tree inconsistency detected: "..current.." has no rockspec.")
+                        util.printerr("Tree inconsistency detected: "..current.." has no rockspec. "..err)
                      else
                         util.printerr("Missing dependency for "..pkg.." "..version..": "..miss)
                      end
@@ -205,6 +208,8 @@ end
 --- Store search results in a manifest table.
 -- @param results table: The search results as returned by search.disk_search.
 -- @param manifest table: A manifest table (must contain repository, modules, commands tables).
+-- It will be altered to include the search results.
+-- @return boolean or (nil, string): true in case of success, or nil followed by an error message.
 local function store_results(results, manifest)
    assert(type(results) == "table")
    assert(type(manifest) == "table")

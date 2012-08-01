@@ -146,25 +146,34 @@ FOR %%L IN (%LUA_PREFIX% c:\lua\5.1.2 c:\lua c:\kepler\1.1) DO (
    IF EXIST "%%L" (
       IF NOT [%LUA_BINDIR%]==[] (
          IF EXIST %LUA_BINDIR%\lua5.1.exe (
-            SET LUA_INTERPRETER=%LUA_BINDIR%\lua5.1.exe
+            SET LUA_INTERPRETER=lua5.1.exe
             GOTO INTERPRETER_IS_SET
          )
          IF EXIST %LUA_BINDIR%\lua.exe (
-            SET LUA_INTERPRETER=%LUA_BINDIR%\lua.exe
+            SET LUA_INTERPRETER=lua.exe
             GOTO INTERPRETER_IS_SET
-         )
+         )		 
+         IF EXIST %LUA_BINDIR%\luajit.exe (
+            SET LUA_INTERPRETER=luajit.exe
+            GOTO INTERPRETER_IS_SET
+         )		 
          ECHO Lua executable lua.exe or lua5.1.exe not found in %LUA_BINDIR%
          GOTO ERROR
       )
       SET CURR=%%L
       FOR %%E IN (\ \bin\) DO (
          IF EXIST "%%L%%E\lua5.1.exe" (
-            SET LUA_INTERPRETER=%%L%%E\lua5.1.exe
+            SET LUA_INTERPRETER=lua5.1.exe
             SET LUA_BINDIR=%%L%%E
             GOTO INTERPRETER_IS_SET
          )
          IF EXIST "%%L%%E\lua.exe" (
-            SET LUA_INTERPRETER=%%L%%E\lua.exe
+            SET LUA_INTERPRETER=lua.exe
+            SET LUA_BINDIR=%%L%%E
+            GOTO INTERPRETER_IS_SET
+         )
+         IF EXIST "%%L%%E\luajit.exe" (
+            SET LUA_INTERPRETER=luajit.exe
             SET LUA_BINDIR=%%L%%E
             GOTO INTERPRETER_IS_SET
          )
@@ -197,7 +206,7 @@ FOR %%L IN (%LUA_PREFIX% c:\lua\5.1.2 c:\lua c:\kepler\1.1) DO (
       )
       GOTO TRY_NEXT_LUA_DIR
       :INCDIR_IS_SET
-	%LUA_INTERPRETER% -v 2>NUL
+	%LUA_BINDIR%\%LUA_INTERPRETER% -v 2>NUL
       IF NOT ERRORLEVEL 1 (
          GOTO LUA_IS_SET
       )
@@ -284,7 +293,7 @@ ECHO LUAROCKS_UNAME_M=[[x86]]>> "%LUADIR%\luarocks\site_config.lua"
 ECHO LUAROCKS_SYSCONFIG=[[%SYSCONFDIR%/config.lua]]>> "%LUADIR%\luarocks\site_config.lua" 
 ECHO LUAROCKS_ROCKS_TREE=[[%ROCKS_TREE%]]>> "%LUADIR%\luarocks\site_config.lua" 
 ECHO LUAROCKS_PREFIX=[[%PREFIX%]]>> "%LUADIR%\luarocks\site_config.lua" 
-ECHO LUAROCKS_DOWNLOADER=[[curl]]>> "%LUADIR%\luarocks\site_config.lua"
+ECHO LUAROCKS_DOWNLOADER=[[wget]]>> "%LUADIR%\luarocks\site_config.lua"
 ECHO LUAROCKS_MD5CHECKER=[[md5sum]]>> "%LUADIR%\luarocks\site_config.lua"
 IF NOT [%FORCE_CONFIG%]==[] ECHO local LUAROCKS_FORCE_CONFIG=true>> "%LUADIR%\luarocks\site_config.lua"
 IF EXIST "%LUADIR%\luarocks\site_config.lua.bak" TYPE "%LUADIR%\luarocks\site_config.lua.bak">> "%LUADIR%\luarocks\site_config.lua" 

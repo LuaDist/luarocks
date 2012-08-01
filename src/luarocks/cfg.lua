@@ -1,7 +1,3 @@
-
-local rawset, next, table, pairs, require, io, os, setmetatable, pcall, ipairs, package, type, assert =
-      rawset, next, table, pairs, require, io, os, setmetatable, pcall, ipairs, package, type, assert
-
 --- Configuration for LuaRocks.
 -- Tries to load the user's configuration file and
 -- defines defaults for unset values. See the
@@ -13,6 +9,10 @@ local rawset, next, table, pairs, require, io, os, setmetatable, pcall, ipairs, 
 -- (see luarocks.site_config) or their user-specific configuration file
 -- (~/.luarocks/config.lua on Unix or %APPDATA%/luarocks/config.lua on
 -- Windows).
+
+local rawset, next, table, pairs, require, io, os, setmetatable, pcall, ipairs, package, type, assert, _VERSION =
+      rawset, next, table, pairs, require, io, os, setmetatable, pcall, ipairs, package, type, assert, _VERSION
+
 module("luarocks.cfg")
 
 -- Load site-local global configurations
@@ -24,7 +24,8 @@ end
 
 _M.site_config = site_config
 
-program_version = "2.0.6"
+lua_version = _VERSION:sub(5)
+program_version = "2.0.10"
 user_agent = "LuaRocks/"..program_version
 
 local persist = require("luarocks.persist")
@@ -75,6 +76,9 @@ elseif system == "Darwin" then
 elseif system == "Linux" then
    detected.unix = true
    detected.linux = true
+elseif system == "SunOS" then
+   detected.unix = true
+   detected.solaris = true
 elseif system and system:match("^CYGWIN") then
    detected.unix = true
    detected.cygwin = true
@@ -90,14 +94,15 @@ end
 -- Path configuration:
 
 local sys_config_file, home_config_file
+local sys_config_ok, home_config_ok = false, false
 if detected.windows or detected.mingw32 then
    home = os.getenv("APPDATA") or "c:"
-   sys_config_file = "c:/luarocks/config.lua"
+   sys_config_file = site_config.LUAROCKS_SYSCONFIG or "c:/luarocks/config.lua"
    home_config_file = home.."/luarocks/config.lua"
    home_tree = home.."/luarocks/"
 else
    home = os.getenv("HOME") or ""
-   sys_config_file = "/etc/luarocks/config.lua"
+   sys_config_file = site_config.LUAROCKS_SYSCONFIG or "/etc/luarocks/config.lua"
    home_config_file = home.."/.luarocks/config.lua"
    home_tree = home.."/.luarocks/"
 end
@@ -105,12 +110,21 @@ end
 variables = {}
 rocks_trees = {}
 
-persist.load_into_table(site_config.LUAROCKS_SYSCONFIG or sys_config_file, _M)
+local ok, err = persist.load_into_table(sys_config_file, _M)
+if ok then
+   sys_config_ok = true
+else -- nil or false
+   sys_config_ok = ok
+   if err and ok == nil then
+      io.stderr:write(err.."\n")
+   end
+end
 
 if not site_config.LUAROCKS_FORCE_CONFIG then
    home_config_file = os.getenv("LUAROCKS_CONFIG") or home_config_file
-   local home_overrides = persist.load_into_table(home_config_file, { home = home })
+   local home_overrides, err = persist.load_into_table(home_config_file, { home = home })
    if home_overrides then
+      home_config_ok = true
       local util = require("luarocks.util")
       if home_overrides.rocks_trees then
          _M.rocks_trees = nil
@@ -119,6 +133,11 @@ if not site_config.LUAROCKS_FORCE_CONFIG then
          _M.rocks_servers = nil
       end
       util.deep_merge(_M, home_overrides)
+   else -- nil or false
+      home_config_ok = home_overrides
+      if err and home_config_ok == nil then
+         io.stderr:write(err.."\n")
+      end
    end
 end
 
@@ -140,8 +159,8 @@ local defaults = {
    use_extensions = false,
    accept_unknown_fields = false,
 
-   lua_modules_path = "/share/lua/5.1/",
-   lib_modules_path = "/lib/lua/5.1/",
+   lua_modules_path = "/share/lua/"..lua_version,
+   lib_modules_path = "/lib/lua/"..lua_version,
 
    arch = "unknown",
    lib_extension = "unknown",
@@ -195,6 +214,7 @@ local defaults = {
       MD5 = "md5",
       STAT = "stat",
       
+      CMAKE = "cmake",
       SEVENZ = "7z",
       
       STATFLAG = "-c '%a'",
@@ -220,9 +240,9 @@ if detected.windows then
    defaults.external_lib_extension = "dll"
    defaults.obj_extension = "obj"
    defaults.external_deps_dirs = { "c:/external/" }
-   defaults.variables.LUA_BINDIR = site_config.LUA_BINDIR and site_config.LUA_BINDIR:gsub("\\", "/") or "c:/lua5.1/bin"
-   defaults.variables.LUA_INCDIR = site_config.LUA_INCDIR and site_config.LUA_INCDIR:gsub("\\", "/") or "c:/lua5.1/include"
-   defaults.variables.LUA_LIBDIR = site_config.LUA_LIBDIR and site_config.LUA_LIBDIR:gsub("\\", "/") or "c:/lua5.1/lib"
+   defaults.variables.LUA_BINDIR = site_config.LUA_BINDIR and site_config.LUA_BINDIR:gsub("\\", "/") or "c:/lua"..lua_version.."/bin"
+   defaults.variables.LUA_INCDIR = site_config.LUA_INCDIR and site_config.LUA_INCDIR:gsub("\\", "/") or "c:/lua"..lua_version.."/include"
+   defaults.variables.LUA_LIBDIR = site_config.LUA_LIBDIR and site_config.LUA_LIBDIR:gsub("\\", "/") or "c:/lua"..lua_version.."/lib"
    defaults.cmake_generator = "MinGW Makefiles"
    defaults.makefile = "Makefile.win"
    defaults.variables.MAKE = "nmake" -- TODO: Split Windows flavors between mingw and msvc
@@ -233,6 +253,7 @@ if detected.windows then
    defaults.variables.MT = "mt"
    defaults.variables.CFLAGS = "/MD /O2"
    defaults.variables.LIBFLAG = "/dll"
+   defaults.variables.LUALIB = defaults.lua_library or "lua"..lua_version..".lib"
    defaults.external_deps_patterns = {
       bin = { "?.exe", "?.bat" },
       lib = { "?.lib", "?.dll", "lib?.dll" },
@@ -256,9 +277,9 @@ if detected.mingw32 then
    defaults.external_lib_extension = "dll"
    defaults.obj_extension = "o"
    defaults.external_deps_dirs = { "c:/external/" }
-   defaults.variables.LUA_BINDIR = site_config.LUA_BINDIR and site_config.LUA_BINDIR:gsub("\\", "/") or "c:/lua5.1/bin"
-   defaults.variables.LUA_INCDIR = site_config.LUA_INCDIR and site_config.LUA_INCDIR:gsub("\\", "/") or "c:/lua5.1/include"
-   defaults.variables.LUA_LIBDIR = site_config.LUA_LIBDIR and site_config.LUA_LIBDIR:gsub("\\", "/") or "c:/lua5.1/lib"
+   defaults.variables.LUA_BINDIR = site_config.LUA_BINDIR and site_config.LUA_BINDIR:gsub("\\", "/") or "c:/lua"..lua_version.."/bin"
+   defaults.variables.LUA_INCDIR = site_config.LUA_INCDIR and site_config.LUA_INCDIR:gsub("\\", "/") or "c:/lua"..lua_version.."/include"
+   defaults.variables.LUA_LIBDIR = site_config.LUA_LIBDIR and site_config.LUA_LIBDIR:gsub("\\", "/") or "c:/lua"..lua_version.."/lib"
    defaults.cmake_generator = "MinGW Makefiles"
    defaults.make = "mingw32-make" -- TODO: Split Windows flavors between mingw and msvc
    defaults.makefile = "Makefile.win"
@@ -323,6 +344,10 @@ if detected.cygwin then
    defaults.variables.LIBFLAG = "-shared"
 end
 
+if detected.bsd then
+   defaults.variables.STATFLAG = "-f '%Op'"
+end
+
 if detected.macosx then
    defaults.external_lib_extension = "dylib"
    defaults.arch = "macosx-"..proc
@@ -330,9 +355,6 @@ if detected.macosx then
    defaults.variables.CC = "export MACOSX_DEPLOYMENT_TARGET=10.3; gcc"
    defaults.variables.LD = "export MACOSX_DEPLOYMENT_TARGET=10.3; gcc"
    defaults.variables.LIBFLAG = "-bundle -undefined dynamic_lookup -all_load"
-end
-
-if detected.bsd then
    defaults.variables.STATFLAG = "-f '%A'"
 end
 
@@ -356,11 +378,18 @@ end
 if detected.openbsd then
    defaults.arch = "openbsd-"..proc
    defaults.platforms = {"unix", "bsd", "openbsd"}
-   defaults.variables.STATFLAG = "-f '%Op'"
+end
+
+if detected.solaris then
+   defaults.arch = "solaris-"..proc
+   defaults.platforms = {"unix", "solaris"}
+   defaults.variables.MAKE = "gmake"
+   defaults.variables.CC = "gcc"
+   defaults.variables.LD = "gcc"
 end
 
 -- Expose some more values detected by LuaRocks for use by rockspec authors.
-defaults.variables.LUA = defaults.lua_interpreter
+defaults.variables.LUA = site_config.LUA_DIR_SET and (defaults.variables.LUA_BINDIR.."/"..defaults.lua_interpreter) or defaults.lua_interpreter
 defaults.variables.LUA_LIB = defaults.lua_library
 defaults.variables.LIB_EXTENSION = defaults.lib_extension
 defaults.variables.OBJ_EXTENSION = defaults.obj_extension
@@ -400,6 +429,10 @@ for _,tree in ipairs(rocks_trees) do
                        (tree.lua_dir or tree.root..lua_modules_path).."/?/init.lua;"..package.path
     package.cpath = (tree.lib_dir or tree.root..lib_modules_path).."/?."..lib_extension..";"..package.cpath
   end
+end
+
+function which_config()
+   return sys_config_file, sys_config_ok, home_config_file, home_config_ok
 end
 
 --- Check if platform was detected

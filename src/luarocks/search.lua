@@ -331,10 +331,10 @@ end
 -- user possibilities if it couldn't narrow down a single match.
 -- @param action function: A function that takes a .src.rock or
 -- .rockspec URL as a parameter.
--- @string name string: A rock name
--- @string version string or nil: A version number may also be given.
+-- @param name string: A rock name
+-- @param version string or nil: A version number may also be given.
 -- @return The result of the action function, or nil and an error message. 
-function act_on_src_or_rockspec(action, name, version)
+function act_on_src_or_rockspec(action, name, version, ...)
    assert(type(action) == "function")
    assert(type(name) == "string")
    assert(type(version) == "string" or not version)
@@ -343,7 +343,7 @@ function act_on_src_or_rockspec(action, name, version)
    query.arch = "src|rockspec"
    local results, err = find_suitable_rock(query)
    if type(results) == "string" then
-      return action(results)
+      return action(results, ...)
    elseif type(results) == "table" and next(results) then
       util.printout("Multiple search results were returned.")
       util.printout()

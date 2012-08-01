@@ -122,7 +122,7 @@ end
 
 --- Back-end function that actually loads the local rockspec.
 -- Performs some validation and postprocessing of the rockspec contents.
--- @param file string: The local filename of the rockspec file.
+-- @param filename string: The local filename of the rockspec file.
 -- @return table or (nil, string): A table representing the rockspec
 -- or nil followed by an error message.
 function load_local_rockspec(filename)
@@ -302,7 +302,7 @@ function fetch_sources(rockspec, extract, dest_dir)
    if protocol == "http" or protocol == "https" or protocol == "ftp" or protocol == "file" then
       proto = require("luarocks.fetch")
    else
-      ok, proto = pcall(require, "luarocks.fetch."..protocol)
+      ok, proto = pcall(require, "luarocks.fetch."..protocol:gsub("[+-]", "_"))
       if not ok then
          return nil, "Unknown protocol "..protocol
       end

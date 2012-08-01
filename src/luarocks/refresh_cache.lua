@@ -1,4 +1,5 @@
 
+--- Module implementing the luarocks-admin "refresh_cache" command.
 module("luarocks.refresh_cache", package.seeall)
 
 local util = require("luarocks.util")
@@ -15,7 +16,7 @@ from the configuration file is used instead.
 
 function run(...)
    local flags = util.parse_flags(...)
-   local server, upload_server = cache.get_upload_server(flags["from"])
+   local server, upload_server = cache.get_upload_server(flags["server"])
    if not server then return nil, upload_server end
    local download_url = cache.get_server_urls(server, upload_server)
    

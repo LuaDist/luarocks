@@ -11,7 +11,7 @@ rockspec_format = "1.0"
 rockspec_types = {
    rockspec_format = "string",
    MUST_package = "string",
-   MUST_version = "string",
+   MUST_version = "[%w.]+-[%d]+",
    description = {
       summary = "string",
       detailed = "string",
@@ -156,6 +156,9 @@ local type_check_table
 -- @param item any: The object being checked.
 -- @param expected any: The reference object. In case of a table,
 -- its is structured as a type reference table.
+-- @param context string: A string indicating the "context" where the
+-- error occurred (such as the name of the table the item is a part of),
+-- to be used by error messages.
 -- @return boolean or (nil, string): true if type checking
 -- succeeded, or nil and an error message if it failed.
 -- @see type_check_table
@@ -167,6 +170,15 @@ local function type_check_item(name, item, expected, context)
    if expected_type == "number" then
       if not tonumber(item) then
          return nil, "Type mismatch on field "..context..name..": expected a number"
+      end
+   elseif expected_type == "string" then
+      if not tostring(item) then
+         return nil, "Type mismatch on field "..context..name..": expected a value convertible to string"
+      end
+      if expected ~= "string" then
+         if not item:match("^"..expected.."$") then
+            return nil, "Type mismatch on field "..context..name..": invalid value "..item
+         end
       end
    elseif expected_type == "table" then
       if item_type ~= expected_type then
@@ -196,6 +208,9 @@ end
 -- @param tbl table: The table to be type checked.
 -- @param types table: The reference table, containing
 -- values for recognized fields in the checked table.
+-- @param context string: A string indicating the "context" where the
+-- error occurred (such as the name of the table the item is a part of),
+-- to be used by error messages.
 -- @return boolean or (nil, string): true if type checking
 -- succeeded, or nil and an error message if it failed.
 type_check_table = function(tbl, types, context)

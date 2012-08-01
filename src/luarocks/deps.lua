@@ -317,7 +317,7 @@ local function match_dep(dep, blacklist)
 
    local versions
    if dep.name == "lua" then
-      versions = { "5.1" }
+      versions = { cfg.lua_version }
    else
       versions = manif_core.get_versions(dep.name)
    end
@@ -470,7 +470,7 @@ function fulfill_dependencies(rockspec)
          if not match_dep(dep) then
             local rock = search.find_suitable_rock(dep)
             if not rock then
-               return nil, "Could not find a rock to satisfy dependency: "..show_dep(dep)
+               return nil, "Could not satisfy dependency: "..show_dep(dep)
             end
             local ok, err, errcode = install.run(rock)
             if not ok then
@@ -568,7 +568,7 @@ function check_external_deps(rockspec, mode)
                            end
                         end
                      else
-                        found = fs.exists(dir.path(dirdata.dir, f))
+                        found = fs.is_file(dir.path(dirdata.dir, f))
                      end
                      if found then
                         break
@@ -606,12 +606,15 @@ end
 --- Recursively scan dependencies, to build a transitive closure of all
 -- dependent packages.
 -- @param results table: The results table being built.
+-- @param missing table: The table of missing dependencies being recursively built.
+-- @param manifest table: The manifest table containing dependencies.
 -- @param name string: Package name.
 -- @param version string: Package version.
 -- @return (table, table): The results and a table of missing dependencies.
 function scan_deps(results, missing, manifest, name, version)
    assert(type(results) == "table")
    assert(type(missing) == "table")
+   assert(type(manifest) == "table")
    assert(type(name) == "string")
    assert(type(version) == "string")
 
@@ -630,7 +633,7 @@ function scan_deps(results, missing, manifest, name, version)
    if not deplist then
       rockspec, err = fetch.load_local_rockspec(path.rockspec_file(name, version))
       if err then
-         missing[name.." "..version] = true
+         missing[name.." "..version] = err
          return results, missing
       end
       dependencies_name[version] = rockspec.dependencies
@@ -643,7 +646,7 @@ function scan_deps(results, missing, manifest, name, version)
    end
    if next(failures) then
       for _, failure in pairs(failures) do
-         missing[show_dep(failure)] = true
+         missing[show_dep(failure)] = "failed"
       end
    end
    results[name] = version

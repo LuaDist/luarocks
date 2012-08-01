@@ -27,9 +27,9 @@ local function unpack_rockspec(rockspec_file, dir_name)
    assert(type(rockspec_file) == "string")
    assert(type(dir_name) == "string")
    
-   local rockspec = fetch.load_rockspec(rockspec_file)
+   local rockspec, err = fetch.load_rockspec(rockspec_file)
    if not rockspec then
-      return nil, "Failed loading rockspec "..rockspec_file
+      return nil, "Failed loading rockspec "..rockspec_file..": "..err
    end
    fs.change_dir(dir_name)
    local ok, sources_dir = fetch.fetch_sources(rockspec, true, ".")
@@ -45,6 +45,8 @@ end
 --- Load a .rock file to the given directory and unpack it inside it.
 -- @param rock_file string: The URL for a .rock file.
 -- @param dir_name string: The directory where to unpack.
+-- @param kind string: the kind of rock file, as in the second-level
+-- extension in the rock filename (eg. "src", "all", "linux-x86")
 -- @return table or (nil, string): the loaded rockspec table or 
 -- nil and an error message.
 local function unpack_rock(rock_file, dir_name, kind)

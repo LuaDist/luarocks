@@ -59,7 +59,7 @@ function is_writable(file)
       if fh then fh:close() end
       os.remove(file2)
    else
-      local fh = io.open(file, 'rb+')
+      local fh = io.open(file, 'r+b')
       result = fh ~= nil
       if fh then fh:close() end
    end
@@ -129,7 +129,8 @@ if lfs_ok then
 -- @return boolean: true if command succeeds (status code 0), false
 -- otherwise.
 function execute_string(cmd)
-   if os.execute(cmd) == 0 then
+   local code = os.execute(cmd)
+   if code == 0 or code == true then
       return true
    else
       return false
@@ -159,7 +160,7 @@ end
 -- a crossplatform way.
 function change_dir_to_root()
    table.insert(dir_stack, lfs.currentdir())
-   lfs.chdir("/")	-- works on Windows too
+   lfs.chdir("/") -- works on Windows too
 end
 
 --- Change working directory to the previous in the dir stack.
@@ -246,7 +247,7 @@ function copy(src, dest, perms)
    if not perms then perms = fs.get_permissions(src) end
    local src_h, err = io.open(src, "rb")
    if not src_h then return nil, err end
-   local dest_h, err = io.open(dest, "wb+")
+   local dest_h, err = io.open(dest, "w+b")
    if not dest_h then src_h:close() return nil, err end
    while true do
       local block = src_h:read(8192)
@@ -542,7 +543,7 @@ function download(url, filename)
       err = "Unsupported protocol"
    end
    if not content then
-      return false, err
+      return false, tostring(err)
    end
    local file = io.open(filename, "wb")
    if not file then return false end
@@ -578,7 +579,26 @@ end
 
 if posix_ok then
 
+local octal_to_rwx = {
+   ["0"] = "---",
+   ["1"] = "--x",
+   ["2"] = "-w-",
+   ["3"] = "-wx",
+   ["4"] = "r--",
+   ["5"] = "r-x",
+   ["6"] = "rw-",
+   ["7"] = "rwx",
+}
+
 function chmod(file, mode)
+   -- LuaPosix (as of 5.1.15) does not support octal notation...
+   if mode:sub(1,1) == "0" then
+      local new_mode = {}
+      for c in mode:sub(2):gmatch(".") do
+         table.insert(new_mode, octal_to_rwx[c])
+      end
+      mode = table.concat(new_mode)
+   end
    local err = posix.chmod(file, mode)
    return err == 0
 end
@@ -595,6 +615,7 @@ end
 
 --- Apply a patch.
 -- @param patchname string: The filename of the patch.
+-- @param patchdata string or nil: The actual patch as a string.
 function apply_patch(patchname, patchdata)
    local p, all_ok = patch.read_patch(patchname, patchdata)
    if not all_ok then
@@ -633,9 +654,23 @@ end
 -- plus an error message.
 function check_command_permissions(flags)
    local root_dir = path.root_dir(cfg.rocks_dir)
-   if not flags["local"] and not fs.is_writable(root_dir) then
-      return nil, "Your user does not have write permissions in " .. root_dir ..
-                  " \n-- you may want to run as a privileged user or use your local tree with --local."
+   local ok = true
+   local err = ""
+   for _, dir in ipairs { cfg.rocks_dir, root_dir, dir.dir_name(root_dir) } do
+      if fs.exists(dir) and not fs.is_writable(dir) then
+         ok = false
+         err = "Your user does not have write permissions in " .. dir
+         break
+      end
    end
-   return true
+   if ok then
+      return true
+   else
+      if flags["local"] then
+         err = err .. " \n-- please check your permissions."
+      else
+         err = err .. " \n-- you may want to run as a privileged user or use your local tree with --local."
+      end
+      return nil, err
+   end
 end
