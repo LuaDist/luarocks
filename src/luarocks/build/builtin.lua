@@ -112,11 +112,7 @@ function run(rockspec)
          def:write("EXPORTS\n")
          def:write("luaopen_"..name:gsub("%.", "_").."\n")
          def:close()
-<<<<<<< HEAD
-         local ok = execute(variables.LD, "-dll", "-def:"..deffile, "-out:"..library, dir.path(variables.LUA_LIBDIR, variables.LUA_LIB..".lib"), unpack(extras))
-=======
          local ok = execute(variables.LD, "-dll", "-def:"..deffile, "-out:"..library, dir.path(variables.LUA_LIBDIR, variables.LUALIB), unpack(extras))
->>>>>>> 64153c9560db6484727c6c76e7b5dbc44e879c36
          local manifestfile = basename..".dll.manifest"
          if ok and fs.exists(manifestfile) then
             ok = execute(variables.MT, "-manifest", manifestfile, "-outputresource:"..basename..".dll;2")
@@ -133,11 +129,7 @@ function run(rockspec)
          local ok = execute(variables.RC, "-r", "-fo"..resname, rcname)
          if not ok then return ok end
          ok = execute(variables.LD, "-out:"..wrapname, resname, variables.WRAPPER,
-<<<<<<< HEAD
-                      dir.path(variables.LUA_LIBDIR, variables.LUA_LIB..".lib"), "user32.lib")
-=======
                       dir.path(variables.LUA_LIBDIR, variables.LUALIB), "user32.lib")
->>>>>>> 64153c9560db6484727c6c76e7b5dbc44e879c36
          local manifestfile = wrapname..".manifest"
          if ok and fs.exists(manifestfile) then
             ok = execute(variables.MT, "-manifest", manifestfile, "-outputresource:"..wrapname..";1")

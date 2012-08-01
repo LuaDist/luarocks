@@ -1,7 +1,7 @@
 --- This file is part of LuaDist project
 
 name = "luarocks"
-version = "2.0.6"
+version = "2.0.10"
 
 desc = "LuaRocks is a deployment and management system for Lua modules."
 author = "Hisham Muhammad"
