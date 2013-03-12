@@ -35,7 +35,7 @@ elseif ( WIN32 )
 elseif ( LINUX )
   set ( LUAROCKS_UNAME_S Linux )
 elseif ( APPLE )
-s et ( LUAROCKS_UNAME_S Darwin )
+ set ( LUAROCKS_UNAME_S Darwin )
 endif ( )
 
 # Architecture detection
