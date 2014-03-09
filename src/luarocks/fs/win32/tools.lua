@@ -5,8 +5,8 @@
 module("luarocks.fs.win32.tools", package.seeall)
 
 local fs = require("luarocks.fs")
-local cfg = require("luarocks.cfg")
 local dir = require("luarocks.dir")
+local cfg = require("luarocks.cfg")
 
 local dir_stack = {}
 
@@ -32,53 +32,36 @@ local function command_at(directory, cmd)
    return cmd
 end
 
---- Test for existance of a file.
--- @param file string: filename to test
--- @return boolean: true if file exists, false otherwise.
-function exists(file)
-   assert(file)
-   return fs.execute("if not exist " .. fs.Q(file) ..
-                     " invalidcommandname 2>NUL 1>NUL")
-end
-
 --- Obtain current directory.
 -- Uses the module's internal directory stack.
 -- @return string: the absolute pathname of the current directory.
 function current_dir()
-   local pipe = io.popen(vars.PWD)
-   local current = pipe:read("*l")
-   pipe:close()
+   local current = cfg.cache_pwd
+   if not current then
+      local pipe = io.popen(fs.Q(vars.PWD))
+      current = pipe:read("*l")
+      pipe:close()
+      cfg.cache_pwd = current
+   end
    for _, directory in ipairs(dir_stack) do
       current = fs.absolute_name(directory, current)
    end
    return current
 end
 
---- Test is pathname is a regular file.
--- @param file string: pathname to test
--- @return boolean: true if it is a regular file, false otherwise.
-function is_file(file)
-   assert(file)
-   return fs.execute(vars.TEST.." -f", file)
-end
-
-local md5_cmd = {
-   md5sum = vars.MD5SUM,
-   openssl = vars.OPENSSL.." md5",
-   md5 = vars.MD5,
-}
-
---- Get the MD5 checksum for a file.
--- @param file string: The file to be computed.
--- @return string: The MD5 checksum
-function get_md5(file)
-   local cmd = md5_cmd[cfg.md5checker]
-   if not cmd then return nil end
-   local pipe = io.popen(cmd.." "..fs.absolute_name(file))
-   local computed = pipe:read("*a")
-   pipe:close()
-   if not computed then return nil end
-   return computed:match("("..("%x"):rep(32)..")")
+--- Run the given command.
+-- The command is executed in the current directory in the directory stack.
+-- @param cmd string: No quoting/escaping is applied to the command.
+-- @return boolean: true if command succeeds (status code 0), false
+-- otherwise.
+function execute_string(cmd)
+   cmd = command_at(fs.current_dir(), cmd)
+   local code = os.execute(cmd)
+   if code == 0 or code == true then
+      return true
+   else
+      return false
+   end
 end
 
 --- Change the current directory.
@@ -86,9 +69,14 @@ end
 -- semantics of chdir, as it does not handle errors the same way,
 -- but works well for our purposes for now.
 -- @param directory string: The directory to switch to.
+-- @return boolean or (nil, string): true if successful, (nil, error message) if failed.
 function change_dir(directory)
    assert(type(directory) == "string")
-   table.insert(dir_stack, directory)
+   if fs.is_dir(directory) then
+      table.insert(dir_stack, directory)
+      return true
+   end
+   return nil, "directory not found: "..directory
 end
 
 --- Change directory to root.
@@ -104,28 +92,6 @@ function pop_dir()
    return directory ~= nil
 end
 
---- Run the given command.
--- The command is executed in the current directory in the directory stack.
--- @param cmd string: No quoting/escaping is applied to the command.
--- @return boolean: true if command succeeds (status code 0), false
--- otherwise.
-function execute_string(cmd)
-   local code = os.execute(command_at(fs.current_dir(), cmd))
-   if code == 0 or code == true then
-      return true
-   else
-      return false
-   end
-end
-
---- Test is pathname is a regular file.
--- @param file string: pathname to test
--- @return boolean: true if it is a regular file, false otherwise.
-function is_dir(file)
-   assert(file)
-   return fs.execute(vars.TEST.." -d " .. fs.Q(file) .. " 2>NUL 1>NUL")
-end
-
 --- Create a directory if it does not already exist.
 -- If any of the higher levels in the path name does not exist
 -- too, they are created as well.
@@ -133,8 +99,12 @@ end
 -- @return boolean: true on success, false on failure.
 function make_dir(directory)
    assert(directory)
-   fs.execute(vars.MKDIR.." "..fs.Q(directory).." 1> NUL 2> NUL")
-   return 1
+   directory = dir.normalize(directory)
+   fs.execute_quiet(fs.Q(vars.MKDIR).." -p ", directory)
+   if not fs.is_dir(directory) then
+      return false, "failed making directory "..directory
+   end
+   return true
 end
 
 --- Remove a directory if it is empty.
@@ -143,7 +113,7 @@ end
 -- @param directory string: pathname of directory to remove.
 function remove_dir_if_empty(directory)
    assert(directory)
-   fs.execute_string(vars.RMDIR.." "..fs.Q(directory).." 1> NUL 2> NUL")
+   fs.execute_quiet(fs.Q(vars.RMDIR), directory)
 end
 
 --- Remove a directory if it is empty.
@@ -152,7 +122,7 @@ end
 -- @param directory string: pathname of directory to remove.
 function remove_dir_tree_if_empty(directory)
    assert(directory)
-   fs.execute_string(vars.RMDIR.." "..fs.Q(directory).." 1> NUL 2> NUL")
+   fs.execute_quiet(fs.Q(vars.RMDIR), directory)
 end
 
 --- Copy a file.
@@ -163,7 +133,8 @@ end
 function copy(src, dest)
    assert(src and dest)
    if dest:match("[/\\]$") then dest = dest:sub(1, -2) end
-   if fs.execute(vars.CP, src, dest) then
+   local ok = fs.execute(fs.Q(vars.CP), src, dest)
+   if ok then
       return true
    else
       return false, "Failed copying "..src.." to "..dest
@@ -177,7 +148,7 @@ end
 -- plus an error message.
 function copy_contents(src, dest)
    assert(src and dest)
-   if fs.execute_string(vars.CP.." -a "..src.."\\*.* "..fs.Q(dest).." 1> NUL 2> NUL") then
+   if fs.execute_quiet(fs.Q(vars.CP).." -dR "..src.."\\*.* "..fs.Q(dest)) then
       return true
    else
       return false, "Failed copying "..src.." to "..dest
@@ -187,12 +158,11 @@ end
 --- Delete a file or a directory and all its contents.
 -- For safety, this only accepts absolute paths.
 -- @param arg string: Pathname of source
--- @return boolean: true on success, false on failure.
+-- @return nil
 function delete(arg)
    assert(arg)
-   assert(arg:match("^[\a-zA-Z]?:?[\\/]"))
-   fs.execute(vars.CHMOD.." a+rw -R ", arg)
-   return fs.execute_string(vars.RM.." -rf " .. fs.Q(arg) .. " 1> NUL 2> NUL")
+   assert(arg:match("^[a-zA-Z]?:?[\\/]"))
+   fs.execute_quiet("if exist "..fs.Q(arg.."\\").." ( RMDIR /S /Q "..fs.Q(arg).." ) else ( DEL /Q /F "..fs.Q(arg).." )")
 end
 
 --- List the contents of a directory.
@@ -209,7 +179,7 @@ function list_dir(at)
       return {}
    end
    local result = {}
-   local pipe = io.popen(command_at(at, vars.LS))
+   local pipe = io.popen(command_at(at, fs.Q(vars.LS)))
    for file in pipe:lines() do
       table.insert(result, file)
    end
@@ -232,7 +202,7 @@ function find(at)
       return {}
    end
    local result = {}
-   local pipe = io.popen(command_at(at, vars.FIND.." 2> NUL"))
+   local pipe = io.popen(command_at(at, fs.Q(vars.FIND).." 2> NUL"))
    for file in pipe:lines() do
       -- Windows find is a bit different
       local first_two = file:sub(1,2)
@@ -241,7 +211,41 @@ function find(at)
          table.insert(result, (file:gsub("\\", "/")))
       end
    end
+   pipe:close()
    return result
+end
+
+--- Compress files in a .zip archive.
+-- @param zipfile string: pathname of .zip archive to be created.
+-- @param ... Filenames to be stored in the archive are given as
+-- additional arguments.
+-- @return boolean: true on success, false on failure.
+function zip(zipfile, ...)
+   return fs.execute_quiet(fs.Q(vars.SEVENZ).." -aoa a -tzip", zipfile, ...)
+end
+
+--- Uncompress files from a .zip archive.
+-- @param zipfile string: pathname of .zip archive to be extracted.
+-- @return boolean: true on success, false on failure.
+function unzip(zipfile)
+   assert(zipfile)
+   return fs.execute_quiet(fs.Q(vars.SEVENZ).." -aoa x", zipfile)
+end
+
+--- Test is pathname is a directory.
+-- @param file string: pathname to test
+-- @return boolean: true if it is a directory, false otherwise.
+function is_dir(file)
+   assert(file)
+   return fs.execute_quiet("if not exist " .. fs.Q(file.."\\").." invalidcommandname")
+end
+
+--- Test is pathname is a regular file.
+-- @param file string: pathname to test
+-- @return boolean: true if it is a regular file, false otherwise.
+function is_file(file)
+   assert(file)
+   return fs.execute(fs.Q(vars.TEST).." -f", file)
 end
 
 --- Download a remote file.
@@ -250,47 +254,43 @@ end
 -- resulting local filename of the remote file as the basename of the URL;
 -- if that is not correct (due to a redirection, for example), the local
 -- filename can be given explicitly as this second argument.
--- @return boolean: true on success, false on failure.
-function download(url, filename)
+-- @return (boolean, string): true and the filename on success,
+-- false and the error message on failure.
+function download(url, filename, cache)
    assert(type(url) == "string")
    assert(type(filename) == "string" or not filename)
 
+   filename = fs.absolute_name(filename or dir.base_name(url))
+
+   local ok   
    if cfg.downloader == "wget" then
-      local wget_cmd = vars.WGET.." --no-check-certificate --no-cache --user-agent="..cfg.user_agent.." --quiet --continue "
-      if filename then
-         return fs.execute(wget_cmd.." --output-document ", filename, url)
+      local wget_cmd = fs.Q(vars.WGET).." --no-check-certificate --no-cache --user-agent=\""..cfg.user_agent.." via wget\" --quiet "
+      if cache then
+         -- --timestamping is incompatible with --output-document,
+         -- but that's not a problem for our use cases.
+         fs.change_dir(dir.dir_name(filename))
+         ok = fs.execute(wget_cmd.." --timestamping "..fs.Q(url).." 2> NUL 1> NUL")
+         fs.pop_dir()
+      elseif filename then
+         ok = fs.execute(wget_cmd.." --output-document "..fs.Q(filename).." "..fs.Q(url).." 2> NUL 1> NUL")
       else
-         return fs.execute(wget_cmd, url)
+         ok = fs.execute(wget_cmd..fs.Q(url).." 2> NUL 1> NUL")
       end
    elseif cfg.downloader == "curl" then
-      filename = filename or dir.base_name(url)
-      return fs.execute_string(vars.CURL.." -L --user-agent "..cfg.user_agent.." "..fs.Q(url).." 2> NUL 1> "..fs.Q(filename))
+      ok = fs.execute_string(fs.Q(vars.CURL).." -L --user-agent \""..cfg.user_agent.." via curl\" "..fs.Q(url).." 2> NUL 1> "..fs.Q(filename))
    end
-end
-
-
---- Compress files in a .zip archive.
--- @param zipfile string: pathname of .zip archive to be created.
--- @param ... Filenames to be stored in the archive are given as
--- additional arguments.
--- @return boolean: true on success, false on failure.
-function zip(zipfile, ...)
-   return fs.execute(vars.SEVENZ.." a -tzip", zipfile, ...)
-end
-
---- Uncompress files from a .zip archive.
--- @param zipfile string: pathname of .zip archive to be extracted.
--- @return boolean: true on success, false on failure.
-function unzip(zipfile)
-   assert(zipfile)
-   return fs.execute(vars.SEVENZ.." x", zipfile)
+   if ok then
+      return true, filename
+   else
+      return false
+   end
 end
 
 --- Uncompress gzip file.
 -- @param archive string: Filename of archive.
 -- @return boolean : success status
 local function gunzip(archive)
-  return fs.execute(vars.SEVENZ.." x", archive)
+  return fs.execute_quiet(fs.Q(vars.SEVENZ).." -aoa x", archive)
 end
 
 --- Unpack an archive.
@@ -302,24 +302,24 @@ function unpack_archive(archive)
    assert(type(archive) == "string")
 
    local ok
-   local sevenzx = vars.SEVENZ.." x"
+   local sevenzx = fs.Q(vars.SEVENZ).." -aoa x"
    if archive:match("%.tar%.gz$") then
       ok = gunzip(archive)
       if ok then
-         ok = fs.execute(sevenzx, strip_extension(archive))
+         ok = fs.execute_quiet(sevenzx, strip_extension(archive))
       end
    elseif archive:match("%.tgz$") then
       ok = gunzip(archive)
       if ok then
-         ok = fs.execute(sevenzx, strip_extension(archive)..".tar")
+         ok = fs.execute_quiet(sevenzx, strip_extension(archive)..".tar")
       end
    elseif archive:match("%.tar%.bz2$") then
-      ok = fs.execute(sevenzx, archive)
+      ok = fs.execute_quiet(sevenzx, archive)
       if ok then
-         ok = fs.execute(sevenzx, strip_extension(archive))
+         ok = fs.execute_quiet(sevenzx, strip_extension(archive))
       end
    elseif archive:match("%.zip$") then
-      ok = fs.execute(sevenzx, archive)
+      ok = fs.execute_quiet(sevenzx, archive)
    elseif archive:match("%.lua$") or archive:match("%.c$") then
       -- Ignore .lua and .c files; they don't need to be extracted.
       return true
@@ -331,4 +331,38 @@ function unpack_archive(archive)
       return false, "Failed extracting "..archive
    end
    return true
+end
+
+local md5_cmd = {
+   md5sum = fs.Q(vars.MD5SUM),
+   openssl = fs.Q(vars.OPENSSL).." md5",
+   md5 = fs.Q(vars.MD5),
+}
+
+--- Get the MD5 checksum for a file.
+-- @param file string: The file to be computed.
+-- @return string: The MD5 checksum or nil + message
+function get_md5(file)
+   local cmd = md5_cmd[cfg.md5checker]
+   if not cmd then return nil, "no MD5 checker command configured" end
+   local pipe = io.popen(cmd.." "..fs.Q(fs.absolute_name(file)))
+   local computed = pipe:read("*a")
+   pipe:close()
+   if computed then
+      computed = computed:match("("..("%x"):rep(32)..")")
+   end
+   if computed then return computed end
+   return nil, "Failed to compute MD5 hash for file "..tostring(fs.absolute_name(file))
+end
+
+--- Test for existance of a file.
+-- @param file string: filename to test
+-- @return boolean: true if file exists, false otherwise.
+function exists(file)
+   assert(file)
+   return fs.execute_quiet("if not exist " .. fs.Q(file) .. " invalidcommandname")
+end
+
+function browser(url)
+   return fs.execute(cfg.web_browser.." "..url)
 end

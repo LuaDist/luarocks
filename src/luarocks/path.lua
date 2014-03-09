@@ -7,6 +7,7 @@ module("luarocks.path", package.seeall)
 local dir = require("luarocks.dir")
 local cfg = require("luarocks.cfg")
 local util = require("luarocks.util")
+local deps = require("luarocks.deps")
 
 help_summary = "Return the currently configured package path."
 help_arguments = ""
@@ -27,18 +28,25 @@ end
 
 function rocks_dir(tree)
    if type(tree) == "string" then
-      return dir.path(tree, "lib", "luarocks", "rocks")
+      return dir.path(tree, cfg.rocks_subdir)
    else
       assert(type(tree) == "table")
-      return tree.rocks_dir or dir.path(tree.root, "lib", "luarocks", "rocks")
+      return tree.rocks_dir or dir.path(tree.root, cfg.rocks_subdir)
    end
 end
 
 function root_dir(rocks_dir)
    assert(type(rocks_dir) == "string")
-   
-   local suffix = dir.path("lib", "luarocks", "rocks")
-   return rocks_dir:match("(.*)" .. suffix .. "$")
+   return rocks_dir:match("(.*)" .. util.matchquote(cfg.rocks_subdir) .. ".*$")
+end
+
+function rocks_tree_to_string(tree)
+   if type(tree) == "string" then
+      return tree
+   else
+      assert(type(tree) == "table")
+      return tree.root
+   end
 end
 
 function deploy_bin_dir(tree)
@@ -70,10 +78,10 @@ end
 
 function manifest_file(tree)
    if type(tree) == "string" then
-      return dir.path(tree, "lib", "luarocks", "rocks", "manifest")
+      return dir.path(tree, cfg.rocks_subdir, "manifest")
    else
       assert(type(tree) == "table")
-      return (tree.rocks_dir and dir.path(tree.rocks_dir, "manifest")) or dir.path(tree.root, "lib", "luarocks", "rocks", "manifest")
+      return (tree.rocks_dir and dir.path(tree.rocks_dir, "manifest")) or dir.path(tree.root, cfg.rocks_subdir, "manifest")
    end
 end
 
@@ -287,6 +295,12 @@ function configure_paths(rockspec)
    rockspec.variables = vars
 end
 
+--- Produce a versioned version of a filename.
+-- @param file string: filename (must start with prefix)
+-- @param prefix string: Path prefix for file
+-- @param name string: Rock name
+-- @param version string: Rock version
+-- @return string: a pathname with the same directory parts and a versioned basename.
 function versioned_name(file, prefix, name, version)
    assert(type(file) == "string")
    assert(type(name) == "string")
@@ -305,11 +319,113 @@ function use_tree(tree)
    cfg.deploy_lib_dir = deploy_lib_dir(tree)
 end
 
+--- Apply a given function to the active rocks trees based on chosen dependency mode.
+-- @param deps_mode string: Dependency mode: "one" for the current default tree,
+-- "all" for all trees, "order" for all trees with priority >= the current default,
+-- "none" for no trees (this function becomes a nop).
+-- @param fn function: function to be applied, with the tree dir (string) as the first
+-- argument and the remaining varargs of map_trees as the following arguments.
+-- @return a table with all results of invocations of fn collected.
+function map_trees(deps_mode, fn, ...)
+   local result = {}
+   if deps_mode == "one" then
+      table.insert(result, (fn(cfg.root_dir, ...)) or 0)
+   elseif deps_mode == "all" or deps_mode == "order" then
+      local use = false
+      if deps_mode == "all" then
+         use = true
+      end
+      for _, tree in ipairs(cfg.rocks_trees) do
+         if dir.normalize(rocks_tree_to_string(tree)) == dir.normalize(rocks_tree_to_string(cfg.root_dir)) then
+            use = true
+         end
+         if use then
+            table.insert(result, (fn(tree, ...)) or 0)
+         end
+      end
+   end
+   return result
+end
+
+--- Return the pathname of the file that would be loaded for a module, indexed.
+-- @param module_name string: module name (eg. "socket.core")
+-- @param name string: name of the package (eg. "luasocket")
+-- @param version string: version number (eg. "2.0.2-1")
+-- @param tree string: repository path (eg. "/usr/local")
+-- @param i number: the index, 1 if version is the current default, > 1 otherwise.
+-- This is done this way for use by select_module in luarocks.loader.
+-- @return string: filename of the module (eg. "/usr/local/lib/lua/5.1/socket/core.so")
+function which_i(module_name, name, version, tree, i)
+   local deploy_dir
+   if module_name:match("%.lua$") then
+      deploy_dir = deploy_lua_dir(tree)
+      module_name = dir.path(deploy_dir, module_name)
+   else
+      deploy_dir = deploy_lib_dir(tree)
+      module_name = dir.path(deploy_dir, module_name)
+   end
+   if i > 1 then
+      module_name = versioned_name(module_name, deploy_dir, name, version)
+   end
+   return module_name
+end
+
+--- Return the pathname of the file that would be loaded for a module, 
+-- returning the versioned pathname if given version is not the default version
+-- in the given manifest.
+-- @param module_name string: module name (eg. "socket.core")
+-- @param name string: name of the package (eg. "luasocket")
+-- @param version string: version number (eg. "2.0.2-1")
+-- @param tree string: repository path (eg. "/usr/local")
+-- @param manifest table: the manifest table for the tree.
+-- @return string: filename of the module (eg. "/usr/local/lib/lua/5.1/socket/core.so")
+function which(module_name, filename, name, version, tree, manifest)
+   local versions = manifest.modules[module_name]
+   assert(versions)
+   for i, name_version in ipairs(versions) do
+      if name_version == name.."/"..version then
+         return which_i(filename, name, version, tree, i):gsub("//", "/")
+      end
+   end
+   assert(false)
+end
+
 --- Driver function for "path" command.
 -- @return boolean This function always succeeds.
 function run(...)
-   util.printout(cfg.export_lua_path:format(package.path))
-   util.printout(cfg.export_lua_cpath:format(package.cpath))
+   local flags = util.parse_flags(...)
+   local deps_mode = deps.get_deps_mode(flags)
+   
+   local lr_path, lr_cpath = cfg.package_paths()
+   local bin_dirs = map_trees(deps_mode, deploy_bin_dir)
+
+   if flags["lr-path"] then
+      util.printout(util.remove_path_dupes(lr_path, ';'))
+      return true
+   elseif flags["lr-cpath"] then
+      util.printout(util.remove_path_dupes(lr_cpath, ';'))
+      return true
+   elseif flags["lr-bin"] then
+      local lr_bin = util.remove_path_dupes(table.concat(bin_dirs, cfg.export_path_separator), cfg.export_path_separator)
+      util.printout(util.remove_path_dupes(lr_bin, ';'))
+      return true
+   end
+   
+   if flags["append"] then
+      lr_path = package.path .. ";" .. lr_path
+      lr_cpath = package.cpath .. ";" .. lr_cpath
+   else
+      lr_path =  lr_path.. ";" .. package.path
+      lr_cpath = lr_cpath .. ";" .. package.cpath
+   end
+
+   util.printout(cfg.export_lua_path:format(util.remove_path_dupes(lr_path, ';')))
+   util.printout(cfg.export_lua_cpath:format(util.remove_path_dupes(lr_cpath, ';')))
+   if flags["bin"] then
+      table.insert(bin_dirs, 1, os.getenv("PATH"))
+      local lr_bin = util.remove_path_dupes(table.concat(bin_dirs, cfg.export_path_separator), cfg.export_path_separator)
+      util.printout(cfg.export_path:format(lr_bin))
+   end
    return true
 end
 

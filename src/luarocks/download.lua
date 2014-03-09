@@ -7,6 +7,8 @@ local util = require("luarocks.util")
 local path = require("luarocks.path")
 local fetch = require("luarocks.fetch")
 local search = require("luarocks.search")
+local fs = require("luarocks.fs")
+local dir = require("luarocks.dir")
 
 help_summary = "Download a specific rock file from a rocks server."
 help_arguments = "[--all] [--arch=<arch> | --source | --rockspec] [<name> [<version>]]"
@@ -18,19 +20,32 @@ help = [[
 --arch=<arch>  Download rock for a specific architecture.
 ]]
 
+local function get_file(filename)
+   local protocol, pathname = dir.split_url(filename)
+   if protocol == "file" then
+      local ok, err = fs.copy(pathname, fs.current_dir())
+      if ok then
+         return pathname
+      else
+         return nil, err
+      end
+   else
+      return fetch.fetch_url(filename)
+   end
+end
+
 function download(arch, name, version, all)
    local results, err
    local query = search.make_query(name, version)
    if arch then query.arch = arch end
    if all then
       if name == "" then query.exact_name = false end
-      results, err = search.search_repos(query)
+      results = search.search_repos(query)
    else
       results, err = search.find_suitable_rock(query)
    end
    if type(results) == "string" then
-      local file = fetch.fetch_url(results)
-      return file
+      return get_file(results)
    elseif type(results) == "table" and next(results) then
       if all then
          local all_ok = true
@@ -39,7 +54,7 @@ function download(arch, name, version, all)
             for version, versions in pairs(result) do
                for _,items in pairs(versions) do
                   local filename = path.make_url(items.repo, name, version, items.arch)
-                  local ok, err = fetch.fetch_url(filename)
+                  local ok, err = get_file(filename)
                   if not ok then
                      all_ok = false
                      any_err = any_err .. "\n" .. err
@@ -50,9 +65,7 @@ function download(arch, name, version, all)
          return all_ok, any_err
       else
          util.printerr("Multiple search results were returned.")
-         util.printout()
-         util.printout("Search results:")
-         util.printout("---------------")
+         util.title("Search results:")
          search.print_results(results)
          return nil, "Please narrow your query or use --all."
       end

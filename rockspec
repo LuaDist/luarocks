@@ -1,5 +1,5 @@
 package = "LuaRocks"
-local VER = "2.0.10"
+local VER = "2.1.2"
 local REV = "1"
 version = VER.."-"..REV
 
@@ -20,7 +20,7 @@ description = {
 }
 
 dependencies = {
-   "lua ~> 5.1"
+   "lua >= 5.1"
 }
 
 source = {

@@ -14,6 +14,7 @@ LUA_BINDIR="/usr/bin"
 LUA_INCDIR="/usr/include"
 LUA_LIBDIR="/usr/lib"
 LUA_VERSION="5.1"
+MULTIARCH_SUBDIR=""
 
 # ----------------------------------------------------------------------------
 # FUNCTION DEFINITIONS
@@ -38,7 +39,7 @@ system's package manager.
 --rocks-tree=FILE           Root of the local tree of installed rocks.
                             Default is \$PREFIX
 
---lua-version=VERSION       Use specific Lua version: 5.1 or 5.2 (EXPERIMENTAL)
+--lua-version=VERSION       Use specific Lua version: 5.1 or 5.2
                             Default is "$LUA_VERSION"
 --lua-suffix=SUFFIX         Versioning suffix to use in Lua filenames.
                             Default is "$LUA_SUFFIX" (lua$LUA_SUFFIX...)
@@ -54,6 +55,9 @@ system's package manager.
 --with-md5-checker=TOOL     Which tool to use as a downloader.
                             Valid options are: md5sum, openssl
                             Default is to auto-detect.
+--versioned-rocks-dir       Use a versioned rocks dir, such as
+                            \$PREFIX/lib/luarocks/rocks-$LUA_VERSION/.
+                            Default is to auto-detect the necessity.
 --force-config              Use a single config location. Do not use the
                             \$LUAROCKS_CONFIG variable or the user's home
                             directory. Useful to avoid conflicts when LuaRocks
@@ -162,6 +166,9 @@ do
    --force-config)
       FORCE_CONFIG=yes
       ;;
+   --versioned-rocks-dir)
+      VERSIONED_ROCKS_DIR=yes
+      ;;
    --lua-suffix)
       [ -n "$value" ] || die "Missing value in flag $key."
       LUA_SUFFIX="$value"
@@ -264,36 +271,24 @@ if [ "$LUA_SUFFIX_SET" != "yes" ]
 then
    if [ "$LUA_VERSION_SET" = "yes" -a "$LUA_VERSION" = "5.1" ]
    then
-      suffixes="5.1 51"
+      suffixes="5.1 51 -5.1 -51"
    elif [ "$LUA_VERSION_SET" = "yes" -a "$LUA_VERSION" = "5.2" ]
    then
-      suffixes="5.2 52"
+      suffixes="5.2 52 -5.2 -52"
    else
-      suffixes="5.2 52 5.1 51"
+      suffixes="5.2 52 -5.2 -52 5.1 51 -5.1 -51"
    fi
-   for suffix in "" `echo $suffixes` ""
+   for suffix in `echo $suffixes` ""
    do
       search_interpreter "$suffix" && break
    done
 fi
 
-if [ "$LUA_VERSION" = "5.2" ]
-then
-   echo "******************************"
-   echo "WARNING: Lua 5.2 support is still experimental."
-   echo "Bug reports, patches and pull requests are welcome"
-   echo "at the GitHub project:"
-   echo "http://github.com/keplerproject/luarocks"
-   echo "and the mailing list:"
-   echo "https://lists.sourceforge.net/lists/listinfo/luarocks-developers"
-   echo "******************************"
-fi
-
 if [ "$LUA_DIR_SET" != "yes" ]
 then
-   echo_n "Looking for Lua... "
-   if [ ! -n "$find_lua" ]
+   if [ -n "$find_lua" ]
    then
+      echo_n "Looking for Lua... "
       find_lua=`find_program lua$LUA_SUFFIX`
    fi
 
@@ -329,14 +324,23 @@ if [ -f "$lua_h" ]
 then
    echo "lua.h found in $lua_h"
 else
-   LUA_INCDIR="$LUA_INCDIR/lua/$LUA_VERSION"
-   d_lua_h="$LUA_INCDIR/lua.h"
-   if [ -f "$d_lua_h" ]
+   v_dir="$LUA_INCDIR/lua/$LUA_VERSION"
+   lua_h="$v_dir/lua.h"
+   if [ -f "$lua_h" ]
    then
-      echo "lua.h found in $d_lua_h (Debian/Ubuntu)"
+      echo "lua.h found in $lua_h"
+      LUA_INCDIR="$v_dir"
    else
-      echo "lua.h not found (looked in $lua_h)"
-      die "You may want to use the flag --with-lua-include. See --help."
+      d_dir="$LUA_INCDIR/lua$LUA_VERSION"
+      lua_h="$d_dir/lua.h"
+      if [ -f "$lua_h" ]
+      then
+         echo "lua.h found in $lua_h (Debian/Ubuntu)"
+         LUA_INCDIR="$d_dir"
+      else
+         echo "lua.h not found (looked in $LUA_INCDIR, $v_dir, $d_dir)"
+         die "You may want to use the flag --with-lua or --with-lua-include. See --help."
+      fi
    fi
 fi
 
@@ -365,6 +369,41 @@ then
    LUAROCKS_UNAME_M=`uname -m`
 else
    die "Could not determine processor architecture. 'uname -m' failed."
+fi
+
+if [ "$LUA_VERSION" = "5.2" ]
+then
+   LUA_OTHER_VERSION=5.1
+else
+   LUA_OTHER_VERSION=5.2
+fi
+
+LUAROCKS_ROCKS_SUBDIR=/lib/luarocks/rocks
+if [ "$VERSIONED_ROCKS_DIR" = "yes" ]
+then
+   LUAROCKS_ROCKS_SUBDIR=$LUAROCKS_ROCKS_SUBDIR-$LUA_VERSION
+   echo "Using versioned rocks dir: $PREFIX$LUAROCKS_ROCKS_SUBDIR"
+elif [ -e "$PREFIX/share/lua/$LUA_VERSION/luarocks/site_config.lua" ]
+then
+   echo "Existing installation detected."
+   LUAROCKS_ROCKS_SUBDIR=`grep "LUAROCKS_ROCKS_SUBDIR" "$PREFIX/share/lua/$LUA_VERSION/luarocks/site_config.lua" | sed 's,.*=\[\[\(.*\)\]\],\1,'`
+   echo "Using previously configured rocks dir: $PREFIX$LUAROCKS_ROCKS_SUBDIR"
+elif [ -e "$PREFIX/share/lua/$LUA_OTHER_VERSION/luarocks/site_config.lua" ]
+then
+   echo "Existing installation detected for other Lua version ($LUA_OTHER_VERSION)."
+   LUAROCKS_ROCKS_SUBDIR=$LUAROCKS_ROCKS_SUBDIR-$LUA_VERSION
+   echo "Using versioned rocks dir: $PREFIX$LUAROCKS_ROCKS_SUBDIR"
+else
+   echo "Using unversioned rocks dir: $PREFIX$LUAROCKS_ROCKS_SUBDIR"
+fi
+
+if [ "$LUAROCKS_UNAME_S" = Linux ]
+then
+   GCC_ARCH=`gcc -print-multiarch 2>/dev/null`
+   if [ -n "$GCC_ARCH" -a -d "/usr/lib/$GCC_ARCH" ]
+   then
+      MULTIARCH_SUBDIR="lib/$GCC_ARCH"
+   fi
 fi
 
 if [ -f config.unix ]; then
@@ -396,6 +435,8 @@ LUAROCKS_UNAME_M=$LUAROCKS_UNAME_M
 LUAROCKS_UNAME_S=$LUAROCKS_UNAME_S
 LUAROCKS_DOWNLOADER=$LUAROCKS_DOWNLOADER
 LUAROCKS_MD5CHECKER=$LUAROCKS_MD5CHECKER
+LUAROCKS_ROCKS_SUBDIR=$LUAROCKS_ROCKS_SUBDIR
+MULTIARCH_SUBDIR=$MULTIARCH_SUBDIR
 
 EOF
 
@@ -406,5 +447,9 @@ echo "Using Lua from: $LUA_DIR"
 make clean > /dev/null 2> /dev/null
 
 echo
-echo "Done. You can now run 'make' to build."
+echo "Done configuring."
+echo "- Type 'make build' and 'make install':"
+echo "  to install to $PREFIX as usual."
+echo "- Type 'make bootstrap':"
+echo "  to install LuaRocks in $PREFIX as a rock."
 echo

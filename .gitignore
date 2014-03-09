@@ -1,2 +1,2 @@
-src/luarocks/site_config.lua
-
+/config.*
+/src/luarocks/site_config.lua

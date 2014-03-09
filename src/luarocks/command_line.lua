@@ -4,13 +4,16 @@ module("luarocks.command_line", package.seeall)
 
 local util = require("luarocks.util")
 local cfg = require("luarocks.cfg")
-local fs = require("luarocks.fs")
 local path = require("luarocks.path")
 local dir = require("luarocks.dir")
+local deps = require("luarocks.deps")
+
+local program = util.this_program("luarocks")
 
 --- Display an error message and exit.
 -- @param message string: The error message.
-local function die(message)
+-- @param exitcode number: the exitcode to use
+local function die(message, exitcode)
    assert(type(message) == "string")
 
    local ok, err = pcall(util.run_scheduled_functions)
@@ -18,19 +21,19 @@ local function die(message)
       util.printerr("\nLuaRocks "..cfg.program_version.." internal bug (please report at luarocks-developers@lists.sourceforge.net):\n"..err)
    end
    util.printerr("\nError: "..message)
-   os.exit(1)
+   os.exit(exitcode or cfg.errorcodes.UNSPECIFIED)
 end
 
-local function is_writable(tree)
-  if type(tree) == "string" then
-    return fs.make_dir(tree) and fs.is_writable(tree)
-  else
-    writable = true
-    for k, v in pairs(tree) do
-      writable = writable and fs.make_dir(v) and fs.is_writable(v)
-    end
-    return writable
-  end
+local function replace_tree(flags, args, tree)
+   local tree = dir.normalize(tree)
+   flags["tree"] = tree
+   for i = 1, #args do
+      if args[i]:match("%-%-tree=") then
+         args[i] = "--tree="..tree
+         break
+      end
+   end
+   path.use_tree(tree)
 end
 
 --- Main command-line processor.
@@ -62,16 +65,26 @@ function run_command(...)
    if flags["only-from"] then flags["only-server"] = flags["only-from"] end
    if flags["only-sources-from"] then flags["only-sources"] = flags["only-sources-from"] end
    if flags["to"] then flags["tree"] = flags["to"] end
+   if flags["nodeps"] then
+      flags["deps-mode"] = "none"
+      table.insert(args, "--deps-mode=none")
+   end
    
    cfg.flags = flags
 
    local command
    
+   if flags["verbose"] then   -- setting it in the config file will kick-in earlier in the process
+      cfg.verbose = true
+      local fs = require("luarocks.fs")
+      fs.verbose()
+   end
+
    if flags["version"] then
-      util.printout(program_name.." "..cfg.program_version)
+      util.printout(program.." "..cfg.program_version)
       util.printout(program_description)
       util.printout()
-      os.exit(0)
+      os.exit(cfg.errorcodes.OK)
    elseif flags["help"] or #nonflags == 0 then
       command = "help"
       args = nonflags
@@ -95,15 +108,33 @@ function run_command(...)
    if cfg.local_by_default then
       flags["local"] = true
    end
+
+   if flags["deps-mode"] and not deps.check_deps_mode_flag(flags["deps-mode"]) then
+      die("Invalid entry for --deps-mode.")
+   end
    
    if flags["tree"] then
-      if flags["tree"] == true then
+      if flags["tree"] == true or flags["tree"] == "" then
          die("Argument error: use --tree=<path>")
       end
-      local root_dir = fs.absolute_name(flags["tree"])
-      path.use_tree(root_dir)
+      local named = false
+      for _, tree in ipairs(cfg.rocks_trees) do
+         if type(tree) == "table" and flags["tree"] == tree.name then
+            if not tree.root then
+               die("Configuration error: tree '"..tree.name.."' has no 'root' field.")
+            end
+            replace_tree(flags, args, tree.root)
+            named = true
+            break
+         end
+      end
+      if not named then
+         local fs = require("luarocks.fs")
+         local root_dir = fs.absolute_name(flags["tree"])
+         replace_tree(flags, args, root_dir)
+      end
    elseif flags["local"] then
-      path.use_tree(cfg.home_tree)
+      replace_tree(flags, args, cfg.home_tree)
    else
       local trees = cfg.rocks_trees
       path.use_tree(trees[#trees])
@@ -148,13 +179,20 @@ function run_command(...)
    end
    
    if commands[command] then
-      local xp, ok, err = xpcall(function() return commands[command].run(unpack(args)) end, function(err)
+      -- TODO the interface of run should be modified, to receive the
+      -- flags table and the (possibly unpacked) nonflags arguments.
+      -- This would remove redundant parsing of arguments.
+      -- I'm not changing this now to avoid messing with the run()
+      -- interface, which I know some people use (even though
+      -- I never published it as a public API...)
+      local cmd = require(commands[command])
+      local xp, ok, err, exitcode = xpcall(function() return cmd.run(unpack(args)) end, function(err)
          die(debug.traceback("LuaRocks "..cfg.program_version
             .." bug (please report at luarocks-developers@lists.sourceforge.net).\n"
             ..err, 2))
       end)
       if xp and (not ok) then
-         die(err)
+         die(err, exitcode)
       end
    else
       die("Unknown command: "..command)

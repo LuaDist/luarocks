@@ -4,7 +4,7 @@
 module("luarocks.pack", package.seeall)
 
 local path = require("luarocks.path")
-local rep = require("luarocks.rep")
+local repos = require("luarocks.repos")
 local fetch = require("luarocks.fetch")
 local fs = require("luarocks.fs")
 local cfg = require("luarocks.cfg")
@@ -45,7 +45,8 @@ local function pack_source_rock(rockspec_file)
    if not source_file then
       return nil, source_dir
    end
-   fs.change_dir(source_dir)
+   local ok, err = fs.change_dir(source_dir)
+   if not ok then return nil, err end
 
    fs.delete(rock_file)
    fs.copy(rockspec_file, source_dir)
@@ -58,12 +59,14 @@ local function pack_source_rock(rockspec_file)
 end
 
 local function copy_back_files(name, version, file_tree, deploy_dir, pack_dir)
-   fs.make_dir(pack_dir)
+   local ok, err = fs.make_dir(pack_dir)
+   if not ok then return nil, err end
    for file, sub in pairs(file_tree) do
       local source = dir.path(deploy_dir, file)
       local target = dir.path(pack_dir, file)
       if type(sub) == "table" then
          local ok, err = copy_back_files(name, version, sub, source, target)
+         if not ok then return nil, err end
       else
          local versioned = path.versioned_name(source, deploy_dir, name, version)
          if fs.exists(versioned) then
@@ -111,7 +114,6 @@ local function do_pack_binary_rock(name, version)
    
    local root = path.root_dir(info.repo)
    local prefix = path.install_dir(name, version, root)
-   
    if not fs.exists(prefix) then
       return nil, "'"..name.." "..version.."' does not seem to be an installed rock."
    end
@@ -129,15 +131,18 @@ local function do_pack_binary_rock(name, version)
 
    local is_binary = false
    if rock_manifest.lib then
-      copy_back_files(name, version, rock_manifest.lib, path.deploy_lib_dir(root), dir.path(temp_dir, "lib"))
+      local ok, err = copy_back_files(name, version, rock_manifest.lib, path.deploy_lib_dir(root), dir.path(temp_dir, "lib"))
+      if not ok then return nil, "Failed copying back files: " .. err end
       is_binary = true
    end
    if rock_manifest.lua then
-      copy_back_files(name, version, rock_manifest.lua, path.deploy_lua_dir(root), dir.path(temp_dir, "lua"))
+      local ok, err = copy_back_files(name, version, rock_manifest.lua, path.deploy_lua_dir(root), dir.path(temp_dir, "lua"))
+      if not ok then return nil, "Failed copying back files: " .. err end
    end
    
-   fs.change_dir(temp_dir)
-   if not is_binary and not rep.has_binaries(name, version) then
+   local ok, err = fs.change_dir(temp_dir)
+   if not ok then return nil, err end
+   if not is_binary and not repos.has_binaries(name, version) then
       rock_file = rock_file:gsub("%."..cfg.arch:gsub("%-","%%-").."%.", ".all.")
    end
    fs.delete(rock_file)
@@ -158,9 +163,9 @@ function pack_binary_rock(name, version, cmd, ...)
    -- to shave off the final deploy steps from the build phase and the initial
    -- collect steps from the pack phase.
 
-   local temp_dir = fs.make_temp_dir("luarocks-build-pack-"..dir.base_name(name))
+   local temp_dir, err = fs.make_temp_dir("luarocks-build-pack-"..dir.base_name(name))
    if not temp_dir then
-      return nil, "Failed creating temporary directory."
+      return nil, "Failed creating temporary directory: "..err
    end
    util.schedule_function(fs.delete, temp_dir)
 
@@ -187,7 +192,7 @@ function run(...)
    local flags, arg, version = util.parse_flags(...)
    assert(type(version) == "string" or not version)
    if type(arg) ~= "string" then
-      return nil, "Argument missing, see help."
+      return nil, "Argument missing. "..util.see_help("pack")
    end
 
    local file, err

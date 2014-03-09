@@ -11,6 +11,8 @@ local util = require("luarocks.util")
 local cfg = require("luarocks.cfg")
 local fetch = require("luarocks.fetch")
 local pack = require("luarocks.pack")
+local remove = require("luarocks.remove")
+local deps = require("luarocks.deps")
 
 help_summary = "Compile package in current directory using a rockspec."
 help_arguments = "[--pack-binary-rock] [<rockspec>]"
@@ -25,15 +27,21 @@ This command is useful as a tool for debugging rockspecs.
 To install rocks, you'll normally want to use the "install" and
 "build" commands. See the help on those for details.
 
-If --pack-binary-rock is passed, the rock is not installed;
-instead, a .rock file with the contents of compilation is produced
-in the current directory.
+--pack-binary-rock  Do not install rock. Instead, produce a .rock file
+                    with the contents of compilation in the current
+                    directory.
+
+--keep              Do not remove previously installed versions of the
+                    rock after installing a new one. This behavior can
+                    be made permanent by setting keep_other_versions=true
+                    in the configuration file.
+
 ]]
 
 --- Driver function for "make" command.
 -- @param name string: A local rockspec.
--- @return boolean or (nil, string): True if build was successful; nil and an
--- error message otherwise.
+-- @return boolean or (nil, string, exitcode): True if build was successful; nil and an
+-- error message otherwise. exitcode is optionally returned.
 function run(...)
    local flags, rockspec = util.parse_flags(...)
    assert(type(rockspec) == "string" or not rockspec)
@@ -54,7 +62,7 @@ function run(...)
       end
    end
    if not rockspec:match("rockspec$") then
-      return nil, "Invalid argument: 'make' takes a rockspec as a parameter. See help."
+      return nil, "Invalid argument: 'make' takes a rockspec as a parameter. "..util.see_help("make")
    end
 
    if flags["pack-binary-rock"] then
@@ -62,10 +70,17 @@ function run(...)
       if not rspec then
          return nil, err
       end
-      return pack.pack_binary_rock(rspec.name, rspec.version, build.build_rockspec, rockspec, false, true, flags["nodeps"])
+      return pack.pack_binary_rock(rspec.name, rspec.version, build.build_rockspec, rockspec, false, true, deps.get_deps_mode(flags))
    else
       local ok, err = fs.check_command_permissions(flags)
+      if not ok then return nil, err, cfg.errorcodes.PERMISSIONDENIED end
+      ok, err = build.build_rockspec(rockspec, false, true, deps.get_deps_mode(flags))
       if not ok then return nil, err end
-      return build.build_rockspec(rockspec, false, true)
+      local name, version = ok, err
+      if (not flags["keep"]) and not cfg.keep_other_versions then
+         local ok, err = remove.remove_other_versions(name, version, flags["force"])
+         if not ok then util.printerr(err) end
+      end
+      return name, version
    end
 end

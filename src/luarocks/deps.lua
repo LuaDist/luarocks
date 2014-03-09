@@ -34,7 +34,7 @@ local operators = {
 }
 
 local deltas = {
-   scm =    1000,
+   scm =    1100,
    cvs =    1000,
    rc =    -1000,
    pre =   -10000,
@@ -170,10 +170,15 @@ local function parse_constraint(input)
    assert(type(input) == "string")
 
    local no_upgrade, op, version, rest = input:match("^(@?)([<>=~!]*)%s*([%w%.%_%-]+)[%s,]*(.*)")
-   op = operators[op]
+   local _op = operators[op]
    version = parse_version(version)
-   if not op or not version then return nil end
-   return { op = op, version = version, no_upgrade = no_upgrade=="@" and true or nil }, rest
+   if not _op then
+      return nil, "Encountered bad constraint operator: '"..tostring(op).."' in '"..input.."'"
+   end
+   if not version then 
+      return nil, "Could not parse version from constraint: '"..input.."'"
+   end
+   return { op = _op, version = version, no_upgrade = no_upgrade=="@" and true or nil }, rest
 end
 
 --- Convert a list of constraints from string to table format.
@@ -187,13 +192,13 @@ end
 function parse_constraints(input)
    assert(type(input) == "string")
 
-   local constraints, constraint = {}, nil
+   local constraints, constraint, oinput = {}, nil, input
    while #input > 0 do
       constraint, input = parse_constraint(input)
       if constraint then
          table.insert(constraints, constraint)
       else
-         return nil
+         return nil, "Failed to parse constraint '"..tostring(oinput).."' with error: ".. input
       end
    end
    return constraints
@@ -212,10 +217,10 @@ end
 function parse_dep(dep)
    assert(type(dep) == "string")
 
-   local name, rest = dep:match("^%s*([a-zA-Z][a-zA-Z0-9%.%-%_]*)%s*(.*)")
-   if not name then return nil end
-   local constraints = parse_constraints(rest)
-   if not constraints then return nil end
+   local name, rest = dep:match("^%s*([a-zA-Z0-9][a-zA-Z0-9%.%-%_]*)%s*(.*)")
+   if not name then return nil, "failed to extract dependency name from '"..tostring(dep).."'" end
+   local constraints, err = parse_constraints(rest)
+   if not constraints then return nil, err end
    return { name = name, constraints = constraints }
 end
 
@@ -290,15 +295,18 @@ function match_constraints(version, constraints)
    local ok = true
    setmetatable(version, version_mt)
    for _, constr in pairs(constraints) do
-      local constr_version = constr.version
-      setmetatable(constr.version, version_mt)
-      if     constr.op == "==" then ok = version == constr_version
-      elseif constr.op == "~=" then ok = version ~= constr_version
-      elseif constr.op == ">"  then ok = version >  constr_version
-      elseif constr.op == "<"  then ok = version <  constr_version
-      elseif constr.op == ">=" then ok = version >= constr_version
-      elseif constr.op == "<=" then ok = version <= constr_version
-      elseif constr.op == "~>" then ok = partial_match(version, constr_version)
+      if type(constr.version) == "string" then
+         constr.version = parse_version(constr.version)
+      end
+      local constr_version, constr_op = constr.version, constr.op
+      setmetatable(constr_version, version_mt)
+      if     constr_op == "==" then ok = version == constr_version
+      elseif constr_op == "~=" then ok = version ~= constr_version
+      elseif constr_op == ">"  then ok = version >  constr_version
+      elseif constr_op == "<"  then ok = version <  constr_version
+      elseif constr_op == ">=" then ok = version >= constr_version
+      elseif constr_op == "<=" then ok = version <= constr_version
+      elseif constr_op == "~>" then ok = partial_match(version, constr_version)
       end
       if not ok then break end
    end
@@ -312,14 +320,15 @@ end
 -- @return table or nil: A table containing fields 'name' and 'version'
 -- representing an installed rock which matches the given dependency,
 -- or nil if it could not be matched.
-local function match_dep(dep, blacklist)
+local function match_dep(dep, blacklist, deps_mode)
    assert(type(dep) == "table")
 
-   local versions
-   if dep.name == "lua" then
-      versions = { cfg.lua_version }
+   local versions = cfg.rocks_provided[dep.name]
+   if cfg.rocks_provided[dep.name] then
+      -- provided rocks have higher priority than manifest's rocks
+      versions = { cfg.rocks_provided[dep.name] }
    else
-      versions = manif_core.get_versions(dep.name)
+      versions = manif_core.get_versions(dep.name, deps_mode)
    end
    if not versions then
       return nil
@@ -357,19 +366,21 @@ end
 -- @param blacklist table or nil: Program versions to not use as valid matches.
 -- Table where keys are program names and values are tables where keys
 -- are program versions and values are 'true'.
--- @return table, table: A table where keys are dependencies parsed
+-- @return table, table, table: A table where keys are dependencies parsed
 -- in table format and values are tables containing fields 'name' and
--- version' representing matches, and a table of missing dependencies
--- parsed as tables.
-function match_deps(rockspec, blacklist)
+-- version' representing matches; a table of missing dependencies
+-- parsed as tables; and a table of "no-upgrade" missing dependencies
+-- (to be used in plugin modules so that a plugin does not force upgrade of
+-- its parent application).
+function match_deps(rockspec, blacklist, deps_mode)
    assert(type(rockspec) == "table")
    assert(type(blacklist) == "table" or not blacklist)
    local matched, missing, no_upgrade = {}, {}, {}
-
+   
    for _, dep in ipairs(rockspec.dependencies) do
-      local found = match_dep(dep, blacklist and blacklist[dep.name] or nil)
+      local found = match_dep(dep, blacklist and blacklist[dep.name] or nil, deps_mode)
       if found then
-         if dep.name ~= "lua" then 
+         if not cfg.rocks_provided[dep.name] then
             matched[dep] = found
          end
       else
@@ -401,7 +412,7 @@ end
 -- @return boolean or (nil, string, [string]): True if no errors occurred, or
 -- nil and an error message if any test failed, followed by an optional
 -- error code.
-function fulfill_dependencies(rockspec)
+function fulfill_dependencies(rockspec, deps_mode)
 
    local search = require("luarocks.search")
    local install = require("luarocks.install")
@@ -433,7 +444,7 @@ function fulfill_dependencies(rockspec)
       end
    end
 
-   local matched, missing, no_upgrade = match_deps(rockspec)
+   local _, missing, no_upgrade = match_deps(rockspec, nil, deps_mode)
 
    if next(no_upgrade) then
       util.printerr("Missing dependencies for "..rockspec.name.." "..rockspec.version..":")
@@ -467,7 +478,7 @@ function fulfill_dependencies(rockspec)
 
       for _, dep in pairs(missing) do
          -- Double-check in case dependency was filled during recursion.
-         if not match_dep(dep) then
+         if not match_dep(dep, nil, deps_mode) then
             local rock = search.find_suitable_rock(dep)
             if not rock then
                return nil, "Could not satisfy dependency: "..show_dep(dep)
@@ -480,6 +491,31 @@ function fulfill_dependencies(rockspec)
       end
    end
    return true
+end
+
+--- If filename matches a pattern, return the capture.
+-- For example, given "libfoo.so" and "lib?.so" is a pattern,
+-- returns "foo" (which can then be used to build names
+-- based on other patterns.
+-- @param file string: a filename
+-- @param pattern string: a pattern, where ? is to be matched by the filename.
+-- @return string The pattern, if found, or nil.
+local function deconstruct_pattern(file, pattern)
+   local depattern = "^"..(pattern:gsub("%.", "%%."):gsub("%*", ".*"):gsub("?", "(.*)")).."$"
+   return (file:match(depattern))
+end
+
+--- Construct all possible patterns for a name and add to the files array.
+-- Run through the patterns array replacing all occurrences of "?"
+-- with the given file name and store them in the files array.
+-- @param file string A raw name (e.g. "foo")
+-- @param array of string An array of patterns with "?" as the wildcard
+-- (e.g. {"?.so", "lib?.so"})
+-- @param files The array of constructed names
+local function add_all_patterns(file, patterns, files)
+   for _, pattern in ipairs(patterns) do
+      table.insert(files, (pattern:gsub("?", file)))
+   end
 end
 
 --- Set up path-related variables for external dependencies.
@@ -541,15 +577,31 @@ function check_external_deps(rockspec, mode)
                prefix = prefix.prefix
             end
             for dirname, dirdata in pairs(dirs) do
-               dirdata.dir = vars[name.."_"..dirname] or dir.path(prefix, dirdata.subdir)
+               local paths
+               local path_var_value = vars[name.."_"..dirname]
+               if path_var_value then
+                  paths = { path_var_value }
+               elseif type(dirdata.subdir) == "table" then
+                  paths = {}
+                  for i,v in ipairs(dirdata.subdir) do
+                     paths[i] = dir.path(prefix, v)
+                  end
+               else
+                  paths = { dir.path(prefix, dirdata.subdir) }
+               end
+               dirdata.dir = paths[1]
                local file = files[dirdata.testfile]
                if file then
                   local files = {}
                   if not file:match("%.") then
-                     for _, pattern in ipairs(dirdata.pattern) do
-                        table.insert(files, (pattern:gsub("?", file)))
-                     end
+                     add_all_patterns(file, dirdata.pattern, files)
                   else
+                     for _, pattern in ipairs(dirdata.pattern) do
+                        local matched = deconstruct_pattern(file, pattern)
+                        if matched then
+                           add_all_patterns(matched, dirdata.pattern, files)
+                        end
+                     end
                      table.insert(files, file)
                   end
                   local found = false
@@ -559,16 +611,22 @@ function check_external_deps(rockspec, mode)
                      if f:match("%.so$") or f:match("%.dylib$") or f:match("%.dll$") then
                         f = f:gsub("%.[^.]+$", "."..cfg.external_lib_extension)
                      end
-                     if f:match("%*") then
-                        local replaced = f:gsub("%.", "%%."):gsub("%*", ".*")
-                        for _, entry in ipairs(fs.list_dir(dirdata.dir)) do
-                           if entry:match(replaced) then
-                              found = true
-                              break
+                     for _, d in ipairs(paths) do
+                        if f:match("%*") then
+                           local replaced = f:gsub("%.", "%%."):gsub("%*", ".*")
+                           for _, entry in ipairs(fs.list_dir(d)) do
+                              if entry:match(replaced) then
+                                 found = true
+                                 break
+                              end
                            end
+                        else
+                           found = fs.is_file(dir.path(d, f))
                         end
-                     else
-                        found = fs.is_file(dir.path(dirdata.dir, f))
+                        if found then
+                           dirdata.dir = d
+                           break
+                        end
                      end
                      if found then
                         break
@@ -611,7 +669,7 @@ end
 -- @param name string: Package name.
 -- @param version string: Package version.
 -- @return (table, table): The results and a table of missing dependencies.
-function scan_deps(results, missing, manifest, name, version)
+function scan_deps(results, missing, manifest, name, version, deps_mode)
    assert(type(results) == "table")
    assert(type(missing) == "table")
    assert(type(manifest) == "table")
@@ -631,7 +689,7 @@ function scan_deps(results, missing, manifest, name, version)
    local deplist = dependencies_name[version]
    local rockspec, err
    if not deplist then
-      rockspec, err = fetch.load_local_rockspec(path.rockspec_file(name, version))
+      rockspec, err = fetch.load_local_rockspec(path.rockspec_file(name, version), false)
       if err then
          missing[name.." "..version] = err
          return results, missing
@@ -640,9 +698,10 @@ function scan_deps(results, missing, manifest, name, version)
    else
       rockspec = { dependencies = deplist }
    end
-   local matched, failures = match_deps(rockspec)
+   local matched, failures = match_deps(rockspec, nil, deps_mode)
+   results[name] = results
    for _, match in pairs(matched) do
-      results, missing = scan_deps(results, missing, manifest, match.name, match.version)
+      results, missing = scan_deps(results, missing, manifest, match.name, match.version, deps_mode)
    end
    if next(failures) then
       for _, failure in pairs(failures) do
@@ -651,4 +710,27 @@ function scan_deps(results, missing, manifest, name, version)
    end
    results[name] = version
    return results, missing
+end
+
+local valid_deps_modes = {
+   one = true,
+   order = true,
+   all = true,
+   none = true,
+}
+
+function check_deps_mode_flag(flag)
+   return valid_deps_modes[flag]
+end
+
+function get_deps_mode(flags)
+   if flags["deps-mode"] then
+      return flags["deps-mode"]
+   else
+      return cfg.deps_mode
+   end
+end
+
+function deps_mode_to_flag(deps_mode)
+   return "--deps-mode="..deps_mode
 end

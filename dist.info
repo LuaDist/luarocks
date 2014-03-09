@@ -1,7 +1,7 @@
 --- This file is part of LuaDist project
 
 name = "luarocks"
-version = "2.0.10"
+version = "2.1.2"
 
 desc = "LuaRocks is a deployment and management system for Lua modules."
 author = "Hisham Muhammad"
@@ -10,7 +10,7 @@ url = "http://www.luarocks.org"
 maintainer = "Peter Drahoš"
 
 depends = {
-	"lua ~> 5.1",
+	"lua >= 5.1",
 	"md5 >= 1.1",
 	"lzlib >= 0.3",
 	"luazip >= 1.2.3",

@@ -8,7 +8,10 @@ local global_env = _G
 
 module("luarocks.util", package.seeall)
 
+local cfg = require("luarocks.cfg")
+
 local scheduled_functions = {}
+local debug = require("debug")
 
 --- Schedule a function to be executed upon program termination.
 -- This is useful for actions such as deleting temporary directories
@@ -52,6 +55,15 @@ function run_scheduled_functions()
    end
 end
 
+--- Produce a Lua pattern that matches precisely the given string
+-- (this is suitable to be concatenating to other patterns,
+-- so it does not include beginning- and end-of-string markers (^$)
+-- @param s string: The input string
+-- @return string: The equivalent pattern
+function matchquote(s)
+   return (s:gsub("[?%-+*%[%].%%()$^]","%%%1"))
+end
+
 --- Extract flags from an arguments list.
 -- Given string arguments, extract flag arguments into a flags set.
 -- For example, given "foo", "--tux=beep", "--bla", "bar", "--baz",
@@ -73,6 +85,38 @@ function parse_flags(...)
       end
    end
    return flags, unpack(args)
+end
+
+--- Build a sequence of flags for forwarding from one command to
+-- another (for example, from "install" to "build").
+-- @param flags table: A table of parsed flags
+-- @param ... string...: A variable number of flags to be checked
+-- in the flags table. If no flags are passed as varargs, the
+-- entire flags table is forwarded.
+-- @return string... A variable number of strings
+function forward_flags(flags, ...)
+   assert(type(flags) == "table")
+   local out = {}
+   local filter = select('#', ...)
+   local function add_flag(flagname)
+      if flags[flagname] then
+         if flags[flagname] == true then
+            table.insert(out, "--"..flagname)
+         else
+            table.insert(out, "--"..flagname.."="..flags[flagname])
+         end
+      end
+   end
+   if filter > 0 then
+      for i = 1, filter do
+         add_flag(select(i, ...))
+      end
+   else
+      for flagname, _ in pairs(flags) do
+         add_flag(flagname)
+      end
+   end
+   return unpack(out)
 end
 
 --- Merges contents of src on top of dst's contents.
@@ -277,6 +321,15 @@ function sortedpairs(tbl, sort_function)
    return coroutine.wrap(function() sortedpairs_iterator(tbl, sort_function) end)
 end
 
+function lua_versions()
+   local versions = { "5.1", "5.2" }
+   local i = 0
+   return function()
+      i = i + 1
+      return versions[i]
+   end
+end
+
 function starts_with(s, prefix)
    return s:sub(1,#prefix) == prefix
 end
@@ -297,6 +350,49 @@ end
 -- @param msg string: the warning message
 function warning(msg)
    printerr("Warning: "..msg)
+end
+
+function title(msg, porcelain, underline)
+   if porcelain then return end
+   printout()
+   printout(msg)
+   printout((underline or "-"):rep(#msg))
+   printout()
+end
+
+function this_program(default)
+   local i = 1
+   local last, cur = default, default
+   while i do
+      local dbg = debug.getinfo(i,"S")
+      if not dbg then break end
+      last = cur
+      cur = dbg.source
+      i=i+1
+   end
+   return last:sub(2)
+end
+
+function deps_mode_help(program)
+   return [[
+--deps-mode=<mode>  How to handle dependencies. Four modes are supported:
+                    * all - use all trees from the rocks_trees list
+                      for finding dependencies
+                    * one - use only the current tree (possibly set
+                      with --tree)
+                    * order - use trees based on order (use the current
+                      tree and all trees below it on the rocks_trees list)
+                    * none - ignore dependencies altogether.
+                    The default mode may be set with the deps_mode entry
+                    in the configuration file.
+                    The current default is "]]..cfg.deps_mode..[[".
+                    Type ']]..this_program(program or "luarocks")..[[' with no arguments to see
+                    your list of rocks trees.
+]]
+end
+
+function see_help(command, program)
+   return "See '"..this_program(program or "luarocks")..' help '..command.."'."
 end
 
 -- from http://lua-users.org/wiki/SplitJoin
@@ -326,33 +422,41 @@ function split_string(str, delim, maxNb)
    return result
 end
 
---[[
-Author: Julio Manuel Fernandez-Diaz
-Date:   January 12, 2007
-(For Lua 5.1)
+--- Remove repeated entries from a path-style string.
+-- Example: given ("a;b;c;a;b;d", ";"), returns "a;b;c;d".
+-- @param list string: A path string (from $PATH or package.path)
+-- @param sep string: The separator
+function remove_path_dupes(list, sep)
+   assert(type(list) == "string")
+   assert(type(sep) == "string")
+   local parts = split_string(list, sep)
+   local final, entries = {}, {}
+   for _, part in ipairs(parts) do
+      if not entries[part] then
+         table.insert(final, part)
+         entries[part] = true
+      end
+   end
+   return table.concat(final, sep)
+end
 
-Formats tables with cycles recursively to any depth.
-The output is returned as a string.
-References to other tables are shown as values.
-Self references are indicated.
-
-The string returned is "Lua code", which can be procesed
-(in the case in which indent is composed by spaces or "--").
-Userdata and function keys and values are shown as strings,
-which logically are exactly not equivalent to the original code.
-
-This routine can serve for pretty formating tables with
-proper indentations, apart from printing them:
-
-io.write(table.show(t, "t"))   -- a typical use
-
-Heavily based on "Saving tables with cycles", PIL2, p. 113.
-
-Arguments:
-t is the table.
-name is the name of the table (optional)
-indent is a first indentation (optional).
---]]
+---
+-- Formats tables with cycles recursively to any depth.
+-- References to other tables are shown as values.
+-- Self references are indicated.
+-- The string returned is "Lua code", which can be procesed
+-- (in the case in which indent is composed by spaces or "--").
+-- Userdata and function keys and values are shown as strings,
+-- which logically are exactly not equivalent to the original code.
+-- This routine can serve for pretty formating tables with
+-- proper indentations, apart from printing them:
+-- io.write(table.show(t, "t"))   -- a typical use
+-- Written by Julio Manuel Fernandez-Diaz,
+-- Heavily based on "Saving tables with cycles", PIL2, p. 113.
+-- @param t table: is the table.
+-- @param name string: is the name of the table (optional)
+-- @param indent string: is a first indentation (optional).
+-- @return string: the pretty-printed table
 function show_table(t, name, indent)
    local cart     -- a container
    local autoref  -- for self references
@@ -417,4 +521,20 @@ function show_table(t, name, indent)
    cart, autoref = "", ""
    addtocart(t, name, indent)
    return cart .. autoref
+end
+
+function array_contains(tbl, value)
+   for _, v in ipairs(tbl) do
+      if v == value then
+         return true
+      end
+   end
+   return false
+end
+
+-- Quote Lua string, analogous to fs.Q.
+-- @param s A string, such as "hello"
+-- @return string: A quoted string, such as '"hello"'
+function LQ(s)
+   return ("%q"):format(s)
 end
